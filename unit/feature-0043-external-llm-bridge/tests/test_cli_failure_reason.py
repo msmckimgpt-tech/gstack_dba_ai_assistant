@@ -79,7 +79,7 @@ def test_recoverable_classes_tell_the_user_what_to_do():
     mod = _load_runner()
     assert "다시 보내면" in mod.describe_cli_failure(1, _LIVE_STDOUT, "")
     assert "로그인" in mod.describe_cli_failure(1, "Please run /login", "")
-    assert "업데이트" in mod.describe_cli_failure(2, "", "unknown option --effort")
+    assert "DQA" in mod.describe_cli_failure(2, "", "unknown option --effort")
     assert "설치" in mod.describe_cli_failure(127, "", "claude: command not found")
 
 

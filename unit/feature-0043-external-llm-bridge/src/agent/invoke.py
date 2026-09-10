@@ -21,8 +21,8 @@ from .discovery import _resolve_exe
 from .events import _EV_AI_FAIL, _EV_AI_SPAWN_FAIL, _EV_AI_TIMEOUT
 from .logs import _SECRET_PATTERNS, _log, _log_exc, log_event
 from .caps import schedule_health_recheck
-from .state import ai_blocked, note_ai_outcome
-from .runtimes import _APPEND_SYSTEM_FLAG, _KEEP_MCP, _RUNTIME_SPECS, _STRICT_MCP_FLAG
+from .state import ai_blocked, ai_health_scope, note_ai_outcome
+from .runtimes import _APPEND_SYSTEM_FLAG, _KEEP_MCP, _RUNTIME_SPECS, _STRICT_MCP_FLAG, runtime_option_flag
 
 #: `ask_local_ai` 가 "사용자가 취소했다" 를 알리는 신호.
 #:
@@ -94,8 +94,7 @@ _FAILURE_HINTS: tuple[tuple[object, str], ...] = (
      "다시 질문해 주세요."),
     (re.compile(r"unknown option|unrecognized (option|argument)|"
                 r"invalid (option|argument)|unexpected argument", re.I),
-     "연결된 AI 가 이 호출의 옵션을 알지 못합니다(구버전일 수 있습니다). 그 CLI 를 업데이트하거나 "
-     "웹의 「연결 준비」로 러너를 최신 사본으로 다시 받아 실행해 주세요."),
+     "연결된 AI가 실행 옵션을 거부했습니다. DQA에서 AI 연결 상태를 확인한 뒤 다시 요청해 주세요."),
     (re.compile(r"command not found|no such file or directory|not recognized as", re.I),
      "연결된 AI 의 실행 파일을 찾지 못했습니다. 러너를 띄운 컴퓨터에 그 CLI 가 설치돼 있고 "
      "PATH 에서 보이는지 확인해 주세요."),
@@ -350,7 +349,8 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
                         env: dict | None = None,
                         stdin_text: str | None = None,
                         timeout_sec: float | None = None,
-                        session_result: dict | None = None) -> tuple[bool, str]:
+                        session_result: dict | None = None,
+                        health_scope=None) -> tuple[bool, str]:
     """CLI 를 돌리되 **취소되면 죽인다**. (성공여부, 본문 | CANCELED)
 
     왜 `subprocess.run` 이 아닌가: `run` 은 끝날 때까지 블로킹이라 그동안 도착한 취소를 볼 수
@@ -365,10 +365,13 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
     # 오류로 끝났습니다」를 받은 사용자가 원인을 물어와도 우리 쪽에 볼 것이 없었다.
     _t0 = time.monotonic()
     _exe = (cmd[0] if cmd else "")
+    health_scope = ai_health_scope(health_scope or _exe)
     #: 이 호출의 상한. 호출측이 준 값(아픈 러너)이 우선이고, 없으면 종전 전역(기본 무제한).
     _limit = float(timeout_sec) if timeout_sec else _AI_TIMEOUT_SEC
     try:
         resolved_cmd = _resolve_exe(cmd)
+        if health_scope[:2] != ai_health_scope(health_scope[0])[:2]:
+            return False, "AI 실행 위치가 변경되었습니다. 선택한 AI 연결을 확인한 뒤 다시 보내 주세요."
         proc = subprocess.Popen(resolved_cmd, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, **CHILD_TEXT_IO,
                                 # ⚠ `stdin_text` 가 없을 때는 **파이프를 만들지 않는다** —
@@ -382,7 +385,7 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
         # 여기서 터지는 것은 대개 「그 실행 파일이 없다·권한이 없다」이고, 예외 형이 그
         # 둘을 정확히 가른다(FileNotFoundError vs PermissionError). 문자열로 뭉개지 않는다.
         _log_exc(_EV_AI_SPAWN_FAIL, "AI 를 실행하지 못했다", e, exe=_exe, cwd=cwd or "")
-        note_ai_outcome(False, "연결된 AI 를 실행하지 못했습니다.")
+        note_ai_outcome(False, "연결된 AI 를 실행하지 못했습니다.", runtime=health_scope)
         return False, f"AI 실행 실패: {e}"
 
     # 파이프를 비우는 일은 별도 스레드에 맡긴다. 여기서 직접 읽으면 자식이 큰 출력을 낼 때
@@ -433,7 +436,7 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
                       exe=_exe, limit_sec=int(_limit), unhealthy=bool(timeout_sec),
                       dur_ms=int((time.monotonic() - _t0) * 1000),
                       stderr_tail=(box.get("err") or "")[-2000:])
-            note_ai_outcome(False, "연결된 AI 가 응답하지 않습니다(응답 대기 상한 초과).")
+            note_ai_outcome(False, "연결된 AI 가 응답하지 않습니다(응답 대기 상한 초과).", runtime=health_scope)
             return False, _timeout_notice(int(_limit), bool(timeout_sec))
 
     _dur = int((time.monotonic() - _t0) * 1000)
@@ -443,7 +446,7 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
         # 흘러가, 원인이 적힌 예외를 버리고 빈 사유를 남겼다.
         _log_exc("ai.io_fail", "AI 와의 입출력이 실패했다", pump_exc[0],
                  exe=_exe, dur_ms=_dur, stdin_chars=len(stdin_text or ""))
-        note_ai_outcome(False, "연결된 AI 와의 입출력이 실패했습니다.")
+        note_ai_outcome(False, "연결된 AI 와의 입출력이 실패했습니다.", runtime=health_scope)
         return False, (f"내 AI 와 데이터를 주고받는 중 오류가 났습니다: "
                        f"{type(pump_exc[0]).__name__}: {pump_exc[0]}")
     if proc.returncode is None:
@@ -451,7 +454,7 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
         # 그러면 빈 답이 정상 답으로 제출된다.
         log_event(_EV_AI_FAIL, "AI 의 종료 상태를 확인하지 못했다", level="ERROR",
                   exe=_exe, dur_ms=_dur, stdout_bytes=len(box.get("out") or ""))
-        note_ai_outcome(False, "연결된 AI 의 종료 상태를 확인할 수 없습니다.")
+        note_ai_outcome(False, "연결된 AI 의 종료 상태를 확인할 수 없습니다.", runtime=health_scope)
         return False, "내 AI 의 종료 상태를 확인하지 못했습니다."
     if session_result is not None:
         success, answer = decode_session_output(session_result, box.get("out", ""),
@@ -460,7 +463,7 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
                   resumed=bool(session_result.get("resume")), completed=success,
                   dur_ms=_dur, exit=proc.returncode)
         if answer != _SESSION_MISSING:
-            note_ai_outcome(success, "연결된 AI가 답변을 완료하지 못했습니다.")
+            note_ai_outcome(success, "연결된 AI가 답변을 완료하지 못했습니다.", runtime=health_scope)
             if not success:
                 answer = describe_cli_failure(int(proc.returncode or 1),
                                               session_result.get("failure_detail") or answer,
@@ -478,13 +481,13 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
                   stdout_bytes=len(box.get("out") or ""),
                   stdout_tail=_redact_secrets((box.get("out") or "")[-2000:]),
                   stderr_tail=_redact_secrets((box.get("err") or "")[-2000:]))
-        note_ai_outcome(False, "연결된 AI 가 오류로 끝났습니다.")
+        note_ai_outcome(False, "연결된 AI 가 오류로 끝났습니다.", runtime=health_scope)
         return False, describe_cli_failure(int(proc.returncode), box.get("out", ""),
                                            box.get("err", ""))
     log_event("ai.ok", level="DEBUG", exe=_exe, exit=0, dur_ms=_dur,
               stdout_bytes=len(box.get("out") or ""))
     # 한 번 통했다 = 이 러너는 쓸 수 있다. **즉시** 건강 상태를 되돌린다(자기 치유).
-    note_ai_outcome(True)
+    note_ai_outcome(True, runtime=health_scope)
     return True, (box.get("out") or "").strip()
 
 
@@ -539,11 +542,10 @@ def build_cmd(runtime: str, prompt: str, model: str | None = None,
     argv = list(spec.get("argv") or (caps or {}).get("argv") or [])
     flags: list[str] = []
 
-    # 호출법(플래그 형태)의 출처 — **그 AI 가 스스로 답한 것**이 우선이고, 없으면 내장 표
-    # (P0-Z4). 이 값은 로컬 `config.json` 에서만 오고 서버를 거치지 않는다.
+    # 값 목록은 연결된 AI가 정하고, 알려진 CLI의 호출법은 어댑터가 정한다.
     local = caps or {}
-    model_flag = local.get("model") if local.get("model") is not None else spec.get("model")
-    effort_flag = local.get("effort") if local.get("effort") is not None else spec.get("effort")
+    model_flag = runtime_option_flag(runtime, "model", local)
+    effort_flag = runtime_option_flag(runtime, "effort", local)
 
     if runtimes is None:
         allowed_models = list(local.get("models") or spec.get("models") or [])
@@ -770,14 +772,19 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
     # ⚠ **`ai_blocked()` 로 묻는다** — `ai_health()` 는 3상태(`None` = 아직 확인되지 않음)라
     #   `if not _ai_ok:` 로 읽으면 기동 직후의 「모른다」가 곧 「막는다」가 되어 **모든 첫
     #   질문이 죽는다**. 게이트와 표시가 갈라진 이유는 `state.py` 모듈 주석에 있다.
-    _ai_blocked, _ai_why = ai_blocked()
+    health_scope = ai_health_scope("custom" if custom else kind, model=model)
+    _ai_blocked, _ai_why = ai_blocked(health_scope)
     if _ai_blocked:
         log_event("ai.unhealthy_fastfail",
                   "연결된 AI 가 응답하지 않는 상태로 관측됩니다 — 호출하지 않고 즉시 "
                   "안내합니다(회복은 배경에서 확인합니다).",
                   level="WARN", runtime=kind, reason=_ai_why)
         # 회복 확인은 **배경**에서. 결과를 기다리지 않는다(기다리면 원점으로 돌아간다).
-        schedule_health_recheck(kind if kind in _RUNTIME_SPECS else None)
+        recovery_argv = (shlex.split(custom) if custom else
+                         build_cmd(kind, "{prompt}", model, effort, runtimes,
+                                   (caps or {}).get(kind) or {}) if model or effort else list(argv))
+        schedule_health_recheck("custom" if custom else kind, health_scope=health_scope,
+                                recovery_argv=recovery_argv)
         return False, _unhealthy_notice(_ai_why)
     if custom:
         argv = shlex.split(custom)
@@ -826,7 +833,9 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
             child_env.pop("BRIDGE_CA", None)
             if api_ca:
                 child_env["BRIDGE_CA"] = os.path.abspath(api_ca)
-    kwargs = {"session_result": session} if session is not None else {}
+    kwargs = {"health_scope": health_scope}
+    if session is not None:
+        kwargs["session_result"] = session
     ok, answer = _run_cli_cancelable(cmd, _canceled, cwd=_child_workdir(), env=child_env,
                                      stdin_text=_stdin_text, **kwargs)
     if session is not None and answer == _SESSION_MISSING and not _canceled():
@@ -836,5 +845,5 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
         if fit == "overflow":
             return False, _CMDLINE_OVERFLOW_MSG
         return _run_cli_cancelable(cmd, _canceled, cwd=_child_workdir(), env=child_env,
-                                   stdin_text=stdin_text, session_result=session)
+                                   stdin_text=stdin_text, session_result=session, health_scope=health_scope)
     return ok, answer

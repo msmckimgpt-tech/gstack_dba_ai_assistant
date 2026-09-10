@@ -70,7 +70,20 @@ const _PERSIST_SURFACES = new Set(["/", "/index.html"]);
  * ⚠ 비동기라 «이 페이지의 판정» 에는 쓰이지 않는다 — 그것은 위 `ephemeral` 이 즉시 답한다.
  *   여기서 하는 일은 **다음 화면을 위한 보관**뿐이다.
  */
-function _adoptIfTheBridgeAcceptsIt(port, nonce) {
+/* ⚠ **판정이 끝나기 전에는 주소의 좌표를 지우지 않는다** (codex 적대 리뷰 2026-09-10 P1-2).
+ *
+ * 종전에는 흡수 직후 `history.replaceState` 로 좌표를 지웠다. 그런데 이 경로(보관 허용 표면
+ * 밖)의 보관은 **비동기**라, 지운 뒤 판정이 오기 전에 사용자가 새로고침하면 그 창에는 신호가
+ * **하나도 남지 않는다** — 주소에도 없고 저장소에도 없다. 클라이언트 진입 게이트
+ * (`static/client-gate.js`)가 생기면서 그 상태의 대가가 「연결 능력을 잃는다」에서 **「앱 창이
+ * 설치 안내로 쫓겨난다」**로 커졌다.
+ *
+ * 그래서 지우는 시점을 **판정 이후**로 옮긴다. 새로고침은 같은 주소를 다시 보내므로, 판정이
+ * 오기 전 창은 주소의 좌표로 다시 통과한다. 지연·일시 실패를 「평범한 브라우저 방문」으로
+ * 오판하지 않는다.
+ */
+function _adoptIfTheBridgeAcceptsIt(port, nonce, done) {
+  const settle = function () { try { done && done(); } catch (_) { /* 호출부 사정 */ } };
   try {
     fetch("http://127.0.0.1:" + encodeURIComponent(port) + "/ping", {
       method: "POST",
@@ -84,8 +97,8 @@ function _adoptIfTheBridgeAcceptsIt(port, nonce) {
       try {
         sessionStorage.setItem("dqa.bridge", JSON.stringify({ port: port, nonce: nonce }));
       } catch (_) { /* 저장소가 막힌 환경 — 이 창에서만 쓰고 끝난다 */ }
-    }).catch(function () { /* 그 포트에 아무것도 없다 — 보관하지 않는다 */ });
-  } catch (_) { /* fetch 부재 환경 */ }
+    }).then(settle, settle);                 // 성공·거부·오류 어느 쪽이든 여기서 지운다
+  } catch (_) { settle(); }                  // fetch 부재 환경
 }
 
 export const clientBridge = (function () {
@@ -108,19 +121,31 @@ export const clientBridge = (function () {
       || _keys[_keys.length - 2] !== "client_port"
       || _keys[_keys.length - 1] !== "client_nonce";
     const persist = _PERSIST_SURFACES.has(location.pathname);
+    const stripCoords = function () {
+      try {
+        const p = new URLSearchParams(location.search);
+        if (!p.has("client_port") && !p.has("client_nonce")) return;
+        p.delete("client_port"); p.delete("client_nonce");
+        const rest = p.toString();
+        history.replaceState(null, "", location.pathname + (rest ? "?" + rest : "") + location.hash);
+      } catch (_) { /* 주소를 못 고쳐도 나머지는 돈다 */ }
+    };
     let ephemeral = null;
+    let deferStrip = false;
     if (port && nonce && !tampered) {
-      if (persist) sessionStorage.setItem("dqa.bridge", JSON.stringify({ port: port, nonce: nonce }));
-      else {
+      if (persist) {
+        // ⚠ 저장이 **실패하면** 주소의 좌표가 이 창의 유일한 신호다 — 그때는 지우지 않는다
+        //   (codex 적대 리뷰 2026-09-10 P2-3: quota 초과 등으로 setItem 이 던지는 창).
+        try {
+          sessionStorage.setItem("dqa.bridge", JSON.stringify({ port: port, nonce: nonce }));
+        } catch (_) { deferStrip = true; }
+      } else {
         ephemeral = { port: port, nonce: nonce };
-        _adoptIfTheBridgeAcceptsIt(port, nonce);
+        deferStrip = true;                    // 판정이 온 뒤에 지운다 (위 P1-2)
+        _adoptIfTheBridgeAcceptsIt(port, nonce, stripCoords);
       }
     }
-    if (port || nonce) {
-      q.delete("client_port"); q.delete("client_nonce");
-      const rest = q.toString();
-      history.replaceState(null, "", location.pathname + (rest ? "?" + rest : "") + location.hash);
-    }
+    if ((port || nonce) && !deferStrip) stripCoords();
     if (ephemeral) return ephemeral;
     const raw = sessionStorage.getItem("dqa.bridge");
     return raw ? JSON.parse(raw) : null;
@@ -156,6 +181,7 @@ export function primaryRuntime(runtimes) {
 function runtimeKey(r) { return JSON.stringify([r.name,r.where,r.path,r.distro || "",r.user || ""]); }
 
 function locationLabel(r) {
+  if (r.source === "chatgpt-desktop") return "ChatGPT 데스크톱 · Windows";
   return r.where === "wsl" ? ["WSL", r.distro, r.user].filter(Boolean).join(" · ") : "Windows";
 }
 

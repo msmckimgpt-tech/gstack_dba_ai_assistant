@@ -8,6 +8,34 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260910T165621-desktop-security [SUBAGENT:desktop_security_review] — PASS
+
+- Related TASK: TASK-20260910-desktop-codex
+- Trigger: credential/자격증명, executable/실행 경로
+- Timestamp: 2026-09-10T16:56:21+09:00
+- Verdict: PASS
+- Artifact: [독립 리뷰](reviews/20260910T165621-security.md)
+- Human Approval Needed: no
+
+## REV-20260910T165621-desktop-backend-qa [SUBAGENT:desktop_backend_qa_review] — PASS
+
+- Related TASK: TASK-20260910-desktop-codex
+- Trigger: discovery/발견, cache/캐시, runner/API 계약
+- Timestamp: 2026-09-10T16:56:21+09:00
+- Verdict: PASS
+- Artifact: [독립 리뷰](reviews/20260910T165621-backend-qa.md)
+- Human Approval Needed: no
+
+## REV-20260910T165621-desktop-ux-design [SUBAGENT:desktop_ux_design_review] — PASS
+
+- Related TASK: TASK-20260910-desktop-codex
+- Trigger: UI/위치 선택, label/라벨, reconnect/재연결
+- Timestamp: 2026-09-10T16:56:21+09:00
+- Verdict: PASS
+- Artifact: [독립 리뷰](reviews/20260910T165621-ux-design.md)
+- Human Approval Needed: no
+
+
 ## REV-YYYYMMDD-0001
 - Related Change:
 - Reason:

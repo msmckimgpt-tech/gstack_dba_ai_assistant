@@ -1,0 +1,333 @@
+/* feature-0003 client-entry-gate — 설치 안내 화면(`/install`).
+ *
+ * ## 이 파일이 «정하지» 않는 것
+ *
+ * 색·서체·모서리 반경·그림자의 값은 전부 `css/base.css` 토큰에서 온다. 폴백 값은 base.css
+ * 를 못 실은 경우를 위한 것이고, 실릴 때는 시스템 값이 이긴다(`ai-connect.css` 와 같은 규약).
+ *
+ * ## 이 화면이 «문서» 인 이유 — 대화상자가 아니다
+ *
+ * `ai-connect.css` 는 화면 정중앙에 카드 하나를 띄운다(단일 행동 = 대화상자 모양). 여기는
+ * 다르다 — 받기 · 설치 중 무엇을 보게 되는가 · 파일 대조까지 **읽고 내려가는 순서**가 있다.
+ * 그래서 상단 정렬 단일 컬럼이고, 세로 중앙 정렬을 쓰지 않는다.
+ *
+ * ## 위계는 «크기» 가 아니라 «형태» 로 만든다
+ *
+ * 받기 블록만 흰 표면 + 테두리를 갖고(=행동), 단계 목록은 표면 없이 왼쪽 괘선으로만 흐른다
+ * (=읽는 것). 같은 굵기의 카드를 여러 장 늘어놓으면 어느 것이 다음 할 일인지 사라진다.
+ * 반경도 일부러 갈랐다: 블록 --r-lg(14) · 버튼 --r-sm(6) · 지문칩 --r-xs(4).
+ */
+
+:root {
+  --ins-bg:      var(--bg, #f7f7f4);
+  --ins-surface: var(--surface, #ffffff);
+  --ins-line:    var(--border, #e6e5e0);
+  --ins-hair:    var(--border-subtle, #f0efea);
+  --ins-ink:     var(--text, #26251e);
+  --ins-ink-2:   var(--text-2, #5a5852);
+  --ins-muted:   var(--text-muted, #807d72);
+  --ins-accent:  var(--primary, #2563eb);
+  --ins-accent-d: var(--primary-dark, #1d4ed8);
+  --ins-quiet:   var(--surface-2, #f0efea);
+}
+
+body.ins-body {
+  min-height: 100%;
+  background: var(--ins-bg);
+  color: var(--ins-ink);
+  font-family: var(--font, "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI",
+               "Noto Sans KR", sans-serif);
+  font-size: 15px;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+  /* ⚠ **한국어는 낱말 중간에서 끊지 않는다.** 기본값(`normal`)은 한글을 음절 단위로 쪼개
+     「…실행하세 / 요.」 같은 줄바꿈을 만든다 — 실 브라우저 캡처에서 실제로 그렇게 났다
+     (2026-09-10). `keep-all` 이 낱말을 지키고, 낱말 하나가 줄보다 길 때만
+     `overflow-wrap` 이 개입한다(지문·URL 처럼). */
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+.ins-page {
+  max-width: 620px;
+  /* 위쪽 여백이 아래쪽보다 작다 — 시선이 제목에서 시작해 아래로 흐른다. */
+  margin: 0 auto;
+  padding: 56px 20px 96px;
+}
+
+/* ─── 머리 ──────────────────────────────────────────────────────────────── */
+
+.ins-mark { display: block; margin: 0 0 18px; }
+
+.ins-eyebrow {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ins-muted);
+}
+
+.ins-title {
+  margin: 0 0 8px;
+  font-size: 27px;
+  font-weight: 600;
+  /* 제목만 자간을 조인다 — 큰 글자는 기본 자간이 벌어 보인다. */
+  letter-spacing: -0.018em;
+  line-height: 1.28;
+}
+
+.ins-lead {
+  margin: 0 0 30px;
+  font-size: 16px;
+  color: var(--ins-ink-2);
+}
+
+/* ─── 행동 블록 ─────────────────────────────────────────────────────────── */
+
+.ins-act {
+  background: var(--ins-surface);
+  border: 1px solid var(--ins-line);
+  border-radius: var(--r-lg, 14px);
+  padding: 22px 24px;
+  margin: 0 0 34px;
+}
+
+/* 받을 수 없는 상태(다른 OS · 릴리스 없음 · 확인 중)는 «행동» 이 아니다 —
+   표면을 낮춰 다음 할 일이 아님을 형태로 말한다. */
+.ins-act--quiet {
+  background: var(--ins-quiet);
+  border-color: transparent;
+  color: var(--ins-ink-2);
+}
+
+.ins-act--quiet p { margin: 0 0 6px; }
+.ins-act--quiet p:last-child { margin: 0; }
+
+.ins-act-title {
+  font-weight: 600;
+  color: var(--ins-ink);
+}
+
+.ins-cta {
+  display: inline-block;
+  background: var(--ins-accent);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  text-decoration: none;
+  padding: 11px 22px;
+  border-radius: var(--r-sm, 6px);
+  /* 모션은 «눌렸다» 를 말할 때만 쓴다 — 장식용 hover 확대·bounce 를 두지 않는다. */
+  transition: background-color 120ms ease;
+}
+
+.ins-cta:hover  { background: var(--ins-accent-d); }
+.ins-cta:active { transform: translateY(1px); }
+.ins-cta:focus-visible,
+.ins-copy:focus-visible,
+.ins-link:focus-visible {
+  outline: 2px solid var(--ins-accent);
+  outline-offset: 2px;
+}
+
+.ins-meta {
+  margin: 12px 0 0;
+  font-size: 13.5px;
+  color: var(--ins-muted);
+}
+
+/* 받기 블록 **밖**에 서는 줄이다 — 설치기 배포 여부와 무관하게 뜬다. 그래서 카드의 구분선이
+   아니라 자기 여백으로 선다. */
+.ins-alt {
+  margin: -14px 0 34px;
+  font-size: 14px;
+  color: var(--ins-ink-2);
+}
+
+/* 실패 상태의 유일한 행동. 주 CTA 와 같은 무게로 그리면 «다음 할 일이 둘» 이 된다. */
+.ins-retry {
+  margin-top: 4px;
+  background: var(--ins-surface);
+  border: 1px solid var(--ins-line);
+  border-radius: var(--r-sm, 6px);
+  color: var(--ins-ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 7px 16px;
+  cursor: pointer;
+}
+
+.ins-retry:hover { border-color: var(--ins-muted); }
+.ins-retry:focus-visible { outline: 2px solid var(--ins-accent); outline-offset: 2px; }
+
+.ins-link { color: var(--ins-accent); text-decoration: none; font-weight: 500; }
+.ins-link:hover { text-decoration: underline; }
+
+/* ─── 단계 ──────────────────────────────────────────────────────────────── */
+
+.ins-steps {
+  list-style: none;
+  counter-reset: ins-step;
+  margin: 0 0 30px;
+  padding: 0;
+}
+
+.ins-steps > li {
+  counter-increment: ins-step;
+  position: relative;
+  padding: 0 0 22px 40px;
+}
+
+/* 왼쪽 괘선이 단계를 잇는다. 마지막 항목은 괘선을 끊는다 — 이어질 것이 없다. */
+.ins-steps > li::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  top: 26px;
+  bottom: 2px;
+  width: 1px;
+  background: var(--ins-line);
+}
+
+.ins-steps > li:last-child { padding-bottom: 0; }
+.ins-steps > li:last-child::after { display: none; }
+
+.ins-steps > li::before {
+  content: counter(ins-step);
+  position: absolute;
+  left: 0;
+  top: 1px;
+  width: 25px;
+  height: 25px;
+  border-radius: 50%;
+  border: 1px solid var(--ins-line);
+  background: var(--ins-surface);
+  color: var(--ins-ink-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 23px;
+  text-align: center;
+}
+
+.ins-steps h2 {
+  margin: 0 0 3px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.7;
+}
+
+.ins-steps p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ins-ink-2);
+}
+
+/* ─── 이번 버전 / 파일 대조 ─────────────────────────────────────────────── */
+
+.ins-release-note {
+  margin: 0 0 30px;
+  padding-left: 14px;
+  border-left: 2px solid var(--ins-line);
+  font-size: 14px;
+  color: var(--ins-ink-2);
+}
+
+.ins-verify {
+  border-top: 1px solid var(--ins-line);
+  padding-top: 16px;
+  font-size: 14px;
+}
+
+.ins-verify > summary {
+  cursor: pointer;
+  color: var(--ins-ink-2);
+  font-weight: 500;
+  /* 기본 삼각형을 유지한다 — 접힘/펼침을 브라우저 관례로 말하게 두는 편이,
+     직접 그린 캐럿보다 어느 플랫폼에서든 정확하다. */
+}
+
+.ins-verify > summary:hover { color: var(--ins-ink); }
+
+.ins-verify-body { padding-top: 14px; }
+
+.ins-facts { margin: 0 0 14px; }
+
+.ins-fact {
+  display: flex;
+  gap: 14px;
+  align-items: baseline;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--ins-hair);
+}
+
+.ins-fact:last-child { border-bottom: 0; }
+
+.ins-fact dt {
+  flex: 0 0 78px;
+  color: var(--ins-muted);
+  font-size: 13px;
+}
+
+.ins-fact dd {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;          /* flex 자식의 기본 min-width:auto 가 줄바꿈을 막는 것을 푼다 */
+}
+
+.ins-hash {
+  font-family: var(--mono, ui-monospace, Consolas, monospace);
+  font-size: 12.5px;
+  /* 지문은 낱말 하나짜리 64자다 — 좁은 창에서 가로로 넘치지 않게 **어디서든** 접는다.
+     ⚠ `word-break` 를 여기서 되돌리는 것이 핵심이다. 본문의 `keep-all`(한국어 낱말 보호)이
+     그대로 적용되면 이 토큰은 컨테이너 밖으로 흘러넘친다 — 400px 실측에서 그렇게 났다. */
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  background: var(--ins-quiet);
+  border-radius: var(--r-xs, 4px);
+  padding: 2px 5px;
+}
+
+.ins-copy {
+  margin-left: 8px;
+  vertical-align: baseline;
+  background: var(--ins-surface);
+  border: 1px solid var(--ins-line);
+  border-radius: var(--r-xs, 4px);
+  color: var(--ins-ink-2);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 2px 9px;
+  cursor: pointer;
+}
+
+.ins-copy:hover { border-color: var(--ins-muted); color: var(--ins-ink); }
+
+.ins-cmd {
+  margin: 8px 0 0;
+  background: var(--ins-quiet);
+  border-radius: var(--r-sm, 6px);
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+
+.ins-cmd code {
+  font-family: var(--mono, ui-monospace, Consolas, monospace);
+  font-size: 12.5px;
+  color: var(--ins-ink-2);
+  white-space: pre;
+}
+
+.ins-muted { color: var(--ins-muted); font-size: 13.5px; }
+
+/* ─── 좁은 화면 ─────────────────────────────────────────────────────────── */
+
+@media (max-width: 520px) {
+  .ins-page  { padding: 40px 18px 72px; }
+  .ins-title { font-size: 24px; }
+  .ins-act   { padding: 18px 18px; }
+  .ins-cta   { display: block; text-align: center; }
+  .ins-fact  { flex-direction: column; gap: 2px; }
+  .ins-fact dt { flex-basis: auto; }
+}

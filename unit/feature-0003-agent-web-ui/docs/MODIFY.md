@@ -9,6 +9,56 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260910T134800-client-entry-gate-deploy (배포 결과 원장 반영, docs-only)
+
+**변경**: `docs/test-runs.d/TASK-20260910T120000-client-entry-gate.md` 에 Run 4(라이브 도달성)·
+Run 5(실행 중인 사용자 DQA 앱 수동 관측) append · `docs/TASK.md` Requested Scope 마감 ·
+`docs/REPORT.md` 배포 문장.
+
+**사유**: 직전 cycle 의 Run 은 「배포 후 확인하고 이 파일에 append 한다」로 끝나 있었다.
+배포(`4b2dd68c`, asset_stamp `485a9a2696e0`)가 끝났고 라이브 6건 PASS·앱 창 관측 2회를
+얻었으므로, 그 사실을 원장에 넣지 않으면 Run 이 **stale 한 미완 상태**로 남는다(§5.6).
+
+**정직 표기**: Run 5 는 「앱이 지금 정상 화면」이라는 관측이지 「재적재를 거쳐 정상」이 아니다 —
+접근 로그가 없어 재적재 여부를 가릴 수단이 없었고, 재적재 경로 자체는 Run 4 L5 가 별도로 쟀다.
+
+## CHG-20260910T120000-client-entry-gate (일반 브라우저 → 설치 안내, feature)
+
+**변경**:
+- 신규 `src/static/client-gate.js` — `<head>` 동기 classic 게이트. `GATED = {"/", "/index.html",
+  "/admin"}` 에서 브리지 좌표 2신호를 못 찾으면 `location.replace("/install")`.
+- 신규 `src/static/install.{html,css,js}` — 설치 안내 화면(상태 4종 · 3단계 · 접힌 파일 대조).
+- 신규 라우트 `GET /install`(`routers/static_pages.py`) · `GET /api/ai/client/entry`
+  (`routers/client_release.py`).
+- `src/static/index.html`·`src/static/admin.html` — head 에 게이트 1줄(스타일시트 앞).
+  `admin.html` 에 정본 모듈 `app/client-bridge.js` 1줄 추가.
+- `docs/SECURITY.md §7` 익명 allowlist 2행 · `docs/ROUTEMAP.md` 재생성(270→272 routes).
+- 신규 검증 `tests/verify_client_entry_gate.mjs`(53건) · `tests/test_client_entry_gate.py`(22건).
+
+**사유**: 사용자 요청 2026-09-10 — "DQA클라이언트 외, 일반적인 웹브라우저로 접속할 경우
+클라이언트 설치 안내페이지로 연결해주세요." 2026-09-08 에 공유 화면의 **참여·fork** 를 앱으로
+모은 결정(REQ-20260908-share-client-entry)의 자연스러운 확장이며, 이번에는 **제품 진입 자체**가
+대상이다. 사용자 결정으로 대상은 앱 루트 + 관리 콘솔, 탈출구는 두지 않는다.
+
+**판정을 브라우저에 둔 이유**: 「앱 안인가」의 신호는 브리지 좌표 하나인데, 그 좌표는 앱이 창을
+연 첫 적재 뒤 주소에서 지워져 `sessionStorage` 로 옮겨간다 — **서버는 두 번째 요청부터 그것을
+볼 수 없다.** 서버에서 막으면 앱 창이 새로고침 한 번에 자기 자신에게 차단당한다.
+
+**영향 없음**: 인증·인가 코드, DB 스키마, 권한 데이터, 공유 열람 경로(`/share/{token}`),
+외부 AI 연결(`/ai/connect`), 설치기 다운로드(`/client/{filename}`), `/api/**`, `/static/**`.
+
+**적대 리뷰 반영 (codex, 같은 cycle)** — `[P1]` 2 · `[P2]` 3 전건 수정:
+- `src/static/client-gate.js` — 외부 AI 인가의 로그인 착지점(`/?next=/api/ai/oauth/authorize…`)
+  예외 추가 · 저장소 **쓰기 probe**(`storageIsUsable`)로 fail-open 축 보강.
+- `src/static/app/client-bridge.js` — 주소의 좌표 정리를 **보관 판정 이후**로 이동
+  (`deferStrip`/`stripCoords`). 보관 허용 표면의 `setItem` 실패 시에도 지우지 않는다.
+- `src/static/install.{html,css,js}` — 「불러오지 못함」 상태 신설(+[다시 시도]) ·
+  「이미 설치했다면 열기」를 받기 블록 **밖**으로 분리 · 한국어 `word-break: keep-all`.
+- 기존 가드 2건을 **새 모양에 맞춰 갱신**(계약은 불변): `test_share_client_entry.py` 의
+  persist 분기 검사를 리터럴 한 줄 → 구조 검사로, `test_web_shell.py` 의 주소 정리 검사를
+  지역 변수명 비의존으로. `tests/route_snapshot_p5b.json` 은 신규 2 route 로 재생성.
+
+
 ## CHG-20260910T090000-attach-csv-table-deploy (배포 결과 원장 반영, docs-only)
 
 **변경**: `docs/test-runs.d/TASK-20260909T163000-attach-csv-table.md` 에 배포 도달성 블록 append

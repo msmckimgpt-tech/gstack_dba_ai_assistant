@@ -5,12 +5,54 @@ status: active
 edit_policy: rewrite
 source_of_truth: true
 feature_status: in-progress
-feature_status_date: 2026-09-09
-feature_status_note: 대화별 AI 세션 재사용과 그룹 assistant 문맥 유지 구현·검증, 출하 진행
+feature_status_date: 2026-09-10
+feature_status_note: 모델 전환 시 이전 AI 실패 재사용 차단 및 선택 모델 실행 검증
 
 ---
 
 # Task
+
+## TASK-20260910-model-switch — 모델 변경 후 이전 AI 오류 재사용 차단
+
+### 2.1 Implementation Plan
+
+- 승인: 현재 사용자의 모델 변경 미반영 오류 수정 요청. Minor 내부 라우팅/상태 정합; 인증·권한·DB 스키마 변경 없음. deploy_scope included.
+- 격리: `.worktrees/feature-0043-model-switch`, branch `ai/codex/feature-0043-model-switch`; base d4fee180.
+- 정책: `/root/download/docker/mysql_ai_delegated_dev/repo/AGENTS.md`, SHA256 `21286d42d52a987af6bed233fb5c050b429ddfa77d33b4979fea3acb4a17fdef` (worktree 동일).
+- 실측: 설치 DQA 16:42:29 task.dispatch는 codex/gpt-6-astra/medium. 다음 ai.unhealthy_fastfail은 Claude session limit을 재사용했다. 화면 선택/서버 전달은 맞았고 전역 건강 게이트가 실제 호출을 막았다.
+- 소유: `src/agent/{state,invoke,caps,lifecycle,handler,discovery,runtimes}.py`, `tests/test_runtime_health_isolation.py` 및 영향받는 기존 건강/모델 행위 테스트, 기능 문서.
+- `ai_health`/`ai_blocked`/`note_ai_*` 상태를 런타임·선택 위치 세대에 결속하고 잠금으로 병렬 결과 누수를 막는다. heartbeat는 현재 위치들의 관측만 요약한다.
+- `ask_local_ai`·`_run_cli_cancelable`는 해당 AI의 실패만 읽고 기록한다. 협상/생존/배경 회복과 쿨다운도 같은 범위를 사용한다. 이전 위치의 늦은 결과는 새 위치에 영향을 주지 않는다.
+- `handle_one`은 명시 요청 AI를 실행할 수 없으면 다른 AI를 호출하지 않고 선택 미적용 안내를 제출한다.
+- AC1: Claude 실패 → Codex GPT-6-Astra 선택 → 실제 Codex argv에 모델/등급 전달, Claude 호출 0회.
+- AC2: Claude와 Codex 병렬 성공/실패 및 배경 복구는 서로의 상태를 바꾸지 않는다. 동일 AI는 관측된 실패를 즉시 알리고 배경 복구한다.
+- AC3: 선택 위치 A의 늦은 성공/실패가 위치 B의 상태를 바꾸지 않는다. 미확인 상태를 정상으로 표시하지 않는다.
+- AC4: 요청 runtime 미가용 시 이전 AI 실행 0회, 실패 안내 제출. 같은 runtime 모델 변경·세션 재개 인자 유지.
+- 검증: RED/GREEN 행위 회귀, backend/qa 독립 리뷰(최대3회/P1=0), verify-completion, 병합·web 배포·설치 DQA 비교 및 가능한 앱 사용자 흐름.
+- [x] 구현·집중 회귀·backend/qa 리뷰 — 신규15/집중124 PASS; 최종 전체1812 PASS/1 skipped/실패0, verify PASS
+- [ ] 병합·배포·DQA 검증 기록
+
+
+## TASK-20260910-effort-contract — AI 실행 옵션 오류 수정
+
+### 2.1 Implementation Plan
+
+- 승인 근거: 현재 사용자의 CHZZK 쿼리 리뷰 대화 옵션 오류 수정 요청. Minor: CLI 인자와 실패 안내 정합, 인증/권한/데이터 변경 없음. deploy_scope included(AGENTS §16.5.1).
+- 진단: 대화 `20260910042529-bdc424bf` assistant 9283 및 설치 DQA 개별 runner 캐시·task.dispatch/ai.fail 로그 일치. 최근 14일 61개 대화 중 동일 오류 1건. 잘못된 positive capability가 캐시/실행으로 전달되는 구조결함 재현.
+- 소유 경로: `src/agent/{runtimes,caps,invoke,handler}.py`, 관련 테스트 및 기능 문서, friction ledger. main·다른 worktree 기존 편집 보존.
+- `runtime_option_flag`가 알려진 CLI 호출법을 통일한다. `sanitize_caps` 및 probe/verify는 오염 플래그를 치유하고 모델/등급 값 목록과 미등록 CLI 확장·누락 축 재질의는 유지한다.
+- `handle_one`은 실제 답변 생성 시에만 기본 설정으로 답했다고 알린다. 옵션 오류만으로 구버전을 추정하지 않는다.
+- AC-1: 캐시 `--reasoning-effort`/high → 실제 argv `--effort high`, 잘못된 옵션 0개. 정제를 거치지 않은 실행도 방어.
+- AC-2: Codex config override, 미등록 CLI, 누락 축 재질의, 미지원 축 제외 유지.
+- AC-3: 실패·빈 답변에는 “기본 설정으로 답했습니다”가 없고 성공 대체 응답에는 고지가 남는다.
+- 검증: RED/GREEN 회귀, backend/qa 패널, verify-completion, 병합·web 배포·설치본 비교. 실제 DQA 재요청은 수행 여부 별도 기록.
+- 격리: canonical feature 경로가 타인 브랜치라 cycle-init 중단, skill Phase 9 폴백으로 전용 worktree 생성. primary verify=feature-0043-external-llm-bridge.
+- 정책 SHA-256: 21286d42d52a987af6bed233fb5c050b429ddfa77d33b4979fea3acb4a17fdef.
+- [x] 구현·회귀 검증 — 집중226 PASS, Windows CLI 성공. 넓은 회귀의 기존 구조 테스트1 정합.
+- [x] backend/qa 패널 PASS
+- [x] 완료 게이트 — verify-completion pre-commit PASS
+- [x] 병합·배포·설치본 확인 — PR #1675, web 9ecd324e, 자동 갱신/캐시 보정/heartbeat 복귀 PASS. 원 쿼리 UI 재요청 NOT-RUN(상세 Run).
+
 
 ## TASK-20260909-session-continuity — 대화별 AI 세션 재사용과 그룹 문맥
 

@@ -17,4 +17,5 @@ def test_client_connection_flows():
         pytest.skip("DOM verification requires jsdom; set DQA_JSDOM. See TEST run 20260908-connect-discovery.")
     assert run.returncode == 0, run.stdout + run.stderr
     results = json.loads(run.stdout.strip())
-    assert len(results) == 12 and all(results.values()), results
+    assert len(results) == 13 and all(results.values()), results
+    assert results["desktop_choice_and_preserved_wsl"]

@@ -6,11 +6,12 @@
 from __future__ import annotations
 
 import os
+import stat
 import json
 import re
 
 from .logs import _log
-from .runtimes import _CLI_ADAPTERS, _RUNTIME_SPECS, _WIN_EXEC_EXTS, _WIN_KNOWN_EXTS
+from .runtimes import _CLI_ADAPTERS, _RUNTIME_SPECS, _WIN_EXEC_EXTS, _WIN_KNOWN_EXTS, client_runtime_selection
 
 def _exec_exts() -> list[str]:
     """이 OS 에서 실행 파일 이름에 붙을 수 있는 확장자. POSIX 는 `[""]`.
@@ -201,34 +202,48 @@ def _is_wsl_path(exe: str) -> bool:
     return os.name == "nt" and isinstance(exe, str) and exe.startswith("/")
 
 
-def client_runtime_selection() -> dict | None:
-    """클라이언트가 확인한 위치만 사용한다. 손상된 선택 파일은 자동 탐색으로 우회하지 않는다."""
-    filename = os.environ.get("BRIDGE_RUNTIME_SELECTION")
-    if not filename:
+
+def _desktop_codex_root() -> str | None:
+    if os.name != "nt":
         return None
+    local = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
+    return os.path.join(local, "OpenAI", "Codex", "bin") if os.path.isabs(local) else None
+
+
+def _is_desktop_codex_path(path: str | None) -> bool:
+    root = _desktop_codex_root()
+    if not root or not path:
+        return False
+    parent, filename = os.path.split(os.path.normcase(os.path.abspath(path)))
+    container, digest = os.path.split(parent)
+    return (container == os.path.normcase(os.path.abspath(root))
+            and re.fullmatch(r"[0-9a-f]{16}", digest) is not None and filename == "codex.exe")
+
+
+def _desktop_codex_path() -> str | None:
+    """ChatGPT 앱이 사용자 폴더에 배치한 CLI. 패키지 원본·자격증명은 건드리지 않는다."""
+    root = _desktop_codex_root()
+    if not root:
+        return None
+    candidates = []
     try:
-        with open(filename, encoding="utf-8") as stream:
-            raw = json.loads(stream.read(262145))
-        if not isinstance(raw, dict):
-            return {}
-        selected = {}
-        for name, row in raw.items():
-            if name not in _known_ai_names() or not isinstance(row, dict):
-                return {}
-            if row.get("where") not in ("windows", "wsl") or not row.get("path"):
-                return {}
-            for key in ("path", "distro", "user"):
-                value = row.get(key, "")
-                if not isinstance(value, str) or len(value) > 4096 or any(ord(c) < 32 for c in value):
-                    return {}
-            selection_id = row.get("selection_id")
-            if selection_id is not None and (not isinstance(selection_id, str)
-                                              or not re.fullmatch(r"[0-9a-f]{32}", selection_id)):
-                return {}
-            selected[name] = row
-        return selected
-    except (OSError, ValueError):
-        return {}
+        with os.scandir(root) as entries:
+            for entry in entries:
+                if not re.fullmatch(r"[0-9a-f]{16}", entry.name):
+                    continue
+                try:
+                    folder = entry.stat(follow_symlinks=False)
+                    path = os.path.join(entry.path, "codex.exe")
+                    binary = os.stat(path, follow_symlinks=False)
+                    if (not stat.S_ISDIR(folder.st_mode) or not stat.S_ISREG(binary.st_mode)
+                            or any(getattr(s, "st_file_attributes", 0) & 0x400 for s in (folder, binary))):
+                        continue
+                    candidates.append((folder.st_mtime_ns, entry.name, path))
+                except OSError:
+                    continue
+    except OSError:
+        return None
+    return max(candidates)[2] if candidates else None
 
 
 def _which_ai(name: str) -> str | None:
@@ -245,6 +260,8 @@ def _which_ai(name: str) -> str | None:
     if pinned:
         return pinned
     p = _which(name)
+    if name == "codex" and _is_desktop_codex_path(p):
+        p = _desktop_codex_path()
     if p:
         return p
     if name not in _known_ai_names():
@@ -255,7 +272,8 @@ def _which_ai(name: str) -> str | None:
             cand = os.path.join(d, name + ext)
             if _is_exec(cand):
                 return cand
-    return _which_ai_in_wsl(name)
+    desktop = _desktop_codex_path() if name == "codex" else None
+    return desktop or _which_ai_in_wsl(name)
 
 
 def _resolve_exe(argv: list[str]) -> list[str]:

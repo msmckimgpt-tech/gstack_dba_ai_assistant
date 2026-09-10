@@ -2646,3 +2646,11 @@ status enum: `triaged`→`fixed:undeployed`|`fixed:deployed:unverified-live`|`fi
 - 이전 첨부 수정 폐루프: 배포 이후 해당 대화 assistant 신규0. 재발/소멸 판정 불가, 기존 상태 유지.
 - live: PR1635/ca3fe660 7서비스 배포·56계약검사 PASS. 실계정 catalog200/미바인딩403/첨부대체404 확인. search_routines는 DB 연결 단계500(timeout); 기존 워커/호스트 TCP도 실패해 원래 도구누락404와 분리. 실제 DB 결과 및 새 AI 응답 미실측.
 - corroboration: 2026-09-08 17:19:22+09 SELECT, 이전 첨부 배포 이후·이번 도구 배포 이후 assistant 각0. 30일 관련 대화1 유지. 후속 표본 없음으로 verified 승격 불가.
+
+## FR-learned-cli-flag-overrides-adapter — fixed:deployed:unverified-live
+
+- first_seen/last_seen: 2026-09-10; seen_count: 1; conversation: 20260910042529-bdc424bf (assistant 9283). symptom_confidence/rootcause_confidence: high/high.
+- RC: caps._settle_effort_axis → sanitize_caps → invoke.build_cmd; learned/cached --reasoning-effort overrode Claude adapter --effort. Installed per-runner verified cache and matching exit-1 log corroborate. Recurrence: data/config drift; structural code defect, 1/61 conversations in last 14 days.
+- Triage: S5/F1/L4/C5/R5; fix-now, Minor, current explicit repair request. Cached model mismatch is a separate truthful unavailable selection, not proof of model availability; no invented alias mapping.
+- Fix: CHG-20260910T134000-effort-contract; shared runtime option resolver + cached/probed flags normalization + failed-answer notice truthfulness.
+- Evidence: unit/feature-0043-external-llm-bridge/docs/test-runs.d/20260910-effort-contract.md. pre-fix signature 1 message/1 conversation; post-update assistant0/error0, denominator absent → inconclusive. PR #1675/server9ecd324e deployed; installed DQA bundle371cac83d087 selfupdate, cache repair and heartbeat recovery PASS. Same-query UI resubmission NOT-RUN.

@@ -115,3 +115,7 @@ WebView2 창 아이콘은 `shown` 이벤트 후 검사한다. `about:blank`의 �
 `verify_inapp_update.py --first <격리 AppId 최초 설치기> --second <다음 버전 Update ZIP> --root <새 dqa-inapp 경로> --cert <localhost 인증서> --key <키> --spki <지문> [--notes <실제 release-notes-data.js/release-notes.js/profile CSS를 release-notes.css로 복사한 폴더>]`.
 
 최초 설치는 테스트 전용 AppId·프로토콜·메뉴 그룹으로 컴파일해야 한다. 실제 사용자 설치기를 시험 경로에 실행하면 같은 제거 레지스트리를 변경하므로 허용하지 않는다. 갱신 대상은 Setup이 아닌 ZIP이다. 실제 설치본의 로컬 브리지에서 확인/적용하고 자기 확인창의 Yes만 누른다. 현재 app/runner PID·작성 문구·페이지·쿠키 및 다음 실행 버전을 확인한다. 실패 경계는 설치 mutex·잘못된 해시·포인터 공유 잠금이다. 서버 페이지/러너는 대역이며 실제 AI 제공자 질의·사용자 로그인은 이 검증에 포함되지 않는다.
+
+## ChatGPT 데스크톱 위치 검증
+
+`verify_connect_native.py <stage> --desktop`은 PATH에 codex가 없는 별도 프로필에 `fixtures/codex.exe`를 앱 표준 해시 폴더로 준비한다. fake-bin에는 claude.exe와 wsl.exe만 둔다. fixture Codex는 version/login/exec 및 liveness 요청에 `{"alive":true}`를 응답해야 한다. 실제 동결 DQA/WebView2에서 최초 연결과 프로필 재실행의 desktop 경로·라벨·heartbeat를 검증한다. 실제 사용자 계정의 제공자 응답 검증과는 구분한다.

@@ -239,7 +239,7 @@ def test_renegotiation_marks_unknown_while_it_runs(mod, monkeypatch, tmp_path):
       이 저장소가 반복해 만든 「죽은 가드」를 테스트 쪽에서 재현한 셈이다. 그래서 협상이
       실제로 시작된 **그 순간의 원장 값**을 본다.
     """
-    mod.note_ai_outcome(True)
+    mod.note_ai_outcome(True, runtime="claude")
     assert mod.ai_health()[0] is True, "전제: 이미 확인된 러너"
 
     seen: dict = {}
@@ -275,21 +275,10 @@ def test_settling_call_is_wired(mod):
         "협상이 끝나도 「모른다」를 떨어뜨리는 호출이 없다 — 「확인 중」이 굳는다")
 
 
-def test_the_fail_open_initial_value_is_gone_from_source(mod):
-    """종전 초기값(`_AI_READY = True`)이 **소스에 남아 있지 않다**.
-
-    되살아나는 방식이 한 줄 되돌림이라, 그 한 줄을 명시적으로 잠근다.
-    """
-    body = (_AGENT_SRC / "state.py").read_text(encoding="utf-8")
-    # ⚠ **모듈 최상위 대입만** 본다. `note_ai_outcome` 안의 `_AI_READY = True` 는 정당하다
-    #   (성공 관측 반영) — 들여쓰기를 지우고 비교하면 그것까지 걸려서, 정상 코드를 결함으로
-    #   신고하는 항진 검사가 된다(이 테스트를 처음 쓸 때 실제로 그렇게 걸렸다).
-    top = [l for l in body.splitlines() if l[:1] not in (" ", "\t", "")]
-    assert not [l for l in top if l.startswith("_AI_READY") and "True" in l], (
-        "fail-open 초기값이 되살아났다 — 확인 전 구간이 다시 「정상」으로 보인다: "
-        f"{[l for l in top if l.startswith('_AI_READY')]}")
-    assert [l for l in top if l.startswith("_AI_READY") and "None" in l], (
-        f"초기값이 「아직 확인되지 않음」이 아니다: {[l for l in top if l.startswith('_AI_READY')]}")
+def test_all_runtime_initial_values_are_unknown(mod):
+    for runtime in ("claude", "codex", "gemini"):
+        assert mod.ai_health(runtime) == (None, "")
+        assert mod.ai_blocked(runtime) == (False, "")
 
 
 def test_cached_caps_path_still_settles_the_state(mod, monkeypatch, tmp_path):

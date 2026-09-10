@@ -1,8 +1,9 @@
 """Actual frozen DQA/WebView2 against isolated HTTP and vendor CLI fixtures."""
-import ctypes, hashlib, http.server, json, mimetypes, os, re, subprocess, sys, threading, time, traceback
+import ctypes, hashlib, http.server, json, mimetypes, os, re, shutil, subprocess, sys, threading, time, traceback
 from pathlib import Path
 from urllib.parse import urlparse, urlencode
 ROOT=Path(sys.argv[1]) if len(sys.argv)>1 else Path(__file__).parent
+DESKTOP="--desktop" in sys.argv[2:]
 sys.path.insert(0,str(ROOT/'test-deps'))
 STATIC=ROOT/'static'; OUT=ROOT/'native-evidence'; OUT.mkdir(exist_ok=True)
 PROFILE=ROOT/('isolated-user-'+str(time.time_ns())); PROFILE.mkdir(exist_ok=True)
@@ -87,6 +88,10 @@ try {
 def launch():
  env=dict(os.environ)
  env.update(USERPROFILE=str(PROFILE),HOMEDRIVE=PROFILE.drive,HOMEPATH=str(PROFILE)[2:],LOCALAPPDATA=str(PROFILE/'AppData/Local'),APPDATA=str(PROFILE/'AppData/Roaming'),PATH=str(ROOT/'fake-bin')+';'+str(Path(os.environ['SystemRoot'])/'System32'))
+ if DESKTOP:
+  payload=Path(env["LOCALAPPDATA"])/"OpenAI/Codex/bin/aaaaaaaaaaaaaaaa"
+  payload.mkdir(parents=True,exist_ok=True)
+  shutil.copy2(ROOT/"fixtures/codex.exe",payload/"codex.exe")
  for key in list(env):
   if key.startswith(('BRIDGE_','ANTHROPIC_','OPENAI_','CLAUDE_','CODEX_','GEMINI_')):env.pop(key,None)
  return subprocess.Popen([str(ROOT/'dist/DQAConnect/DQAConnect.exe'),'--base',BASE],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
@@ -115,6 +120,10 @@ def run():
    assert all('_client_location' not in r for x in observed['heartbeats'] for r in x['runtimes'])
    selected=json.loads((PROFILE/'.dqa-connect/runtime-selection.json').read_text())
    assert selected['claude']['user']=='alice' and selected['codex']['where']=='windows'
+   if DESKTOP:
+    assert selected['codex']['path']==str(PROFILE/"AppData/Local/OpenAI/Codex/bin/aaaaaaaaaaaaaaaa/codex.exe")
+    assert "ChatGPT 데스크톱 · Windows" in result["body"],result
+    assert any("ChatGPT 데스크톱" in toast for toast in result["toasts"]),result
    result.update(native_capture=observed.get('capture'),iteration=iteration,native_executable=True,cached_location_reused=iteration==1,heartbeat_confirmed=True)
    results.append(result)
   finally:

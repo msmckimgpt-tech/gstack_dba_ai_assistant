@@ -14,10 +14,10 @@ import threading
 import time
 
 from .base import CHILD_TEXT_IO
-from .state import note_ai_outcome, note_ai_probing, note_ai_unusable
+from .state import ai_health_scope, note_ai_outcome, note_ai_probing, note_ai_unusable
 from .discovery import _resolve_exe, _which_ai
 from .logs import _log, log_event
-from .runtimes import _FORBIDDEN_FLAG_FRAGMENTS, _RUNTIME_SPECS
+from .runtimes import _FORBIDDEN_FLAG_FRAGMENTS, _RUNTIME_SPECS, runtime_option_flag
 
 #: AI 가 답한 **값**(모델·등급)에 요구하는 모양. 서버 쪽 `_CAPS_VALUE_RE` 와 같은 집합이다.
 #:
@@ -45,7 +45,7 @@ _CAPS_VALUE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/+-]{0,63}$")
 #:
 #: 플랫폼마다 모델·추론 지정 방법이 다르다(`--model` / `-m` / `-c key=value`). 우리가 표로
 #: 갖고 있으면 새 플랫폼은 우리 배포를 기다려야 한다. AI 가 자기 호출법을 말하면 그 종속이
-#: 사라진다 — 사용자가 어떤 CLI 를 쓰든 우리 코드는 그대로다.
+#: 사라진다. 단, 알려진 CLI의 호출법은 검증된 어댑터를 사용하고 미등록 CLI만 학습한다.
 #: 능력 질의 앞에 붙는 **도구 금지 가드** (사용자 제보 2026-09-02, 4차: 「어려운 작업이
 #: 아니므로 신속해야 한다」).
 #:
@@ -414,6 +414,10 @@ def sanitize_caps(raw: object) -> dict:
             continue
         model_flag = _coerce_flag(caps.get("model"), "{model}") if caps.get("model") else None
         effort_flag = _coerce_flag(caps.get("effort"), "{effort}") if caps.get("effort") else None
+        if model_flag:
+            model_flag = runtime_option_flag(name, "model", {"model": model_flag})
+        if effort_flag:
+            effort_flag = runtime_option_flag(name, "effort", {"effort": effort_flag})
         argv = caps.get("argv")
         if argv is not None:
             # 호출 형태도 같은 규칙 — 첫 토큰은 실행 파일 이름(= 이 런타임)이어야 하고,
@@ -871,8 +875,12 @@ def _settle_effort_axis(
     ② 우리 표의 짝을 **그 CLI 자신의 `--help` 로 검증**해서 쓴다(우리가 아는 값이라도
     실재를 확인하고 쓴다). ③ 도움말에 없으면 축을 비운다 — 지어내지 않는다.
     """
-    if flag and options and _flag_fits_axis(flag, "effort"):
-        return flag, options, True      # AI 가 짝을 다 줬다 — 그대로.
+    if flag and options:
+        canonical = runtime_option_flag(name, "effort", {"effort": flag})
+        if name in _RUNTIME_SPECS:
+            return canonical, options if canonical else [], True
+        if _flag_fits_axis(canonical, "effort"):
+            return canonical, options, True
 
     # ① 축만 좁게 재질의. 큰 JSON 하나를 요구할 때 빠뜨린 필드를, 그것만 물으면 답한다.
     if left >= _CAPS_AXIS_MIN_SEC:
@@ -881,8 +889,12 @@ def _settle_effort_axis(
         if got is not None:
             re_flag = _coerce_flag(got.get("effort_flag"), "{effort}")
             re_opts = _coerce_options(got.get("efforts"), limit=12)
-            if re_flag and re_opts and _flag_fits_axis(re_flag, "effort"):
-                return re_flag, re_opts, True
+            if re_flag and re_opts:
+                canonical = runtime_option_flag(name, "effort", {"effort": re_flag})
+                if name in _RUNTIME_SPECS:
+                    return canonical, re_opts if canonical else [], True
+                if _flag_fits_axis(canonical, "effort"):
+                    return canonical, re_opts, True
             # ⚠ **명시적 부정만** 존중한다 (codex P1-2). 종전에는 "flag 도 없고 목록도 없다"
             #   를 전부 "이 CLI 는 지원하지 않는다" 로 읽었는데, 그 조건은 `{}`·필드 누락·
             #   형태 오류(거부된 플래그)까지 같이 삼킨다. 그러면 실제로는 지원하는 CLI 가
@@ -991,7 +1003,8 @@ def probe_runtime_caps(name: str, argv: list[str],
         if reason_out is not None:
             reason_out["reason"] = "응답에 모델 목록이 없습니다."
         return None
-    model_flag = _coerce_flag(got.get("model_flag"), "{model}")
+    model_flag = runtime_option_flag(name, "model", {
+        "model": _coerce_flag(got.get("model_flag"), "{model}")})
     effort_flag, efforts, effort_settled = _settle_effort_axis(
         name, argv,
         _coerce_flag(got.get("effort_flag"), "{effort}"),
@@ -1275,7 +1288,8 @@ def verify_runtime_caps(name: str, argv: list[str], entry: dict,
         if reason_out is not None:
             reason_out["reason"] = "확인 응답에 쓸 수 있는 모델이 없습니다."
         return None
-    model_flag = _coerce_flag(got.get("model_flag"), "{model}")
+    model_flag = runtime_option_flag(name, "model", {
+        "model": _coerce_flag(got.get("model_flag"), "{model}")})
     effort_flag, efforts, effort_settled = _settle_effort_axis(
         name, argv,
         _coerce_flag(got.get("effort_flag"), "{effort}"),
@@ -1385,6 +1399,7 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
     cached = {n: c for n, c in (cached or {}).items()
               if str((c or {}).get("source") or "") in _REPORTABLE_SOURCES}
     present = [n for n in names if _which_ai(n)]
+    health_scopes = {n: ai_health_scope(n) for n in present}
     # 우리 표에 없는 CLI 도 물어본다 (P0-Z4 — "플랫폼에 관계없이"). 호출법을 모르므로 가장
     # 흔한 두 형태를 시도한다: `<cli> -p <프롬프트>` 와 `<cli> <프롬프트>`. 둘 다 실패하면
     # 그 런타임은 신고에서 빠진다(사용자는 `--cmd` 로 직접 줄 수 있다).
@@ -1646,7 +1661,7 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
                 #   2026-09-03 에 닫은 「연결되지 않았는데 정상이라 말한다」의 재생산이다.
                 #   모르면 `None` 으로 남겨 생존 확인이 돌게 한다.
                 if _src in _LIVE_ANSWER_SOURCES:
-                    note_ai_outcome(True)
+                    note_ai_outcome(True, runtime=health_scopes[n])
                 _verified = _src == "verified"
                 # 출처를 있는 그대로 적는다 — 「목록의 출처는 연결된 AI」가 이 기능의 계약이라
                 # 로그가 그것을 거짓으로 진술하면 조사자가 계약 위반을 못 본다(적대리뷰 P2).
@@ -1696,7 +1711,7 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
                 # 아무 안내 없이 무한정 기다린다(사용자 지적 2026-09-03).
                 note_ai_unusable(
                     f"이 컴퓨터의 {n} 가 응답하지 않습니다"
-                    + (f" — {_reason}" if _reason else "."))
+                    + (f" — {_reason}" if _reason else "."), runtime=health_scopes[n])
                 _log(f"  {n}: 답을 받지 못했습니다 — 이 런타임은 목록에 나오지 않습니다. "
                      f"({n} 로그인·네트워크 확인 후 `--refresh-caps` 로 다시 시도)")
 
@@ -1911,32 +1926,52 @@ _HEALTH_RECHECK_COOLDOWN_SEC = float(
     os.environ.get("BRIDGE_HEALTH_RECHECK_COOLDOWN_SEC", "") or 60.0)
 
 _HEALTH_RECHECK_LOCK = threading.Lock()
-_HEALTH_RECHECK_AT = [0.0]
+_HEALTH_RECHECK_AT: dict[tuple[str, str, str], float] = {}
+_HEALTH_RECHECK_RUNNING: set[tuple[str, str, str]] = set()
 
 
-def schedule_health_recheck(only: str | None = None) -> bool:
+def schedule_health_recheck(only: str | None = None, *, health_scope=None,
+                            recovery_argv: list | None = None) -> bool:
     """아픈 러너의 회복을 **배경에서** 확인한다. 실제로 띄웠으면 True.
 
     호출측(`invoke.ask_local_ai`)은 이 함수의 결과를 기다리지 않는다 — 기다리면 사용자
     대기 경로로 되돌아온다. 성공하면 `note_ai_outcome(True)` 가 건강 상태를 되돌리고,
     **다음 질문**은 정상 경로(무제한)로 처리된다.
     """
+    scope = ai_health_scope(health_scope if health_scope is not None else only)
+    if scope[2] and recovery_argv is None:
+        return False
     now = time.monotonic()
     with _HEALTH_RECHECK_LOCK:
-        if now - _HEALTH_RECHECK_AT[0] < _HEALTH_RECHECK_COOLDOWN_SEC:
+        if (scope in _HEALTH_RECHECK_RUNNING or
+                now - _HEALTH_RECHECK_AT.get(scope, float("-inf")) < _HEALTH_RECHECK_COOLDOWN_SEC):
             return False
-        _HEALTH_RECHECK_AT[0] = now
+        _HEALTH_RECHECK_AT[scope] = now
+        _HEALTH_RECHECK_RUNNING.add(scope)
 
     def _run() -> None:
         try:
             # 협상 경로를 그대로 재사용한다 — 「응답하는가」를 판정하는 기준이 두 벌이 되면
             # 한쪽은 반드시 낡는다(이 파일이 반복해 지켜 온 규율).
+            if scope[:2] != ai_health_scope(only)[:2]:
+                return
+            if recovery_argv is not None:
+                ok, why = verify_ai_liveness(only, recovery_argv)
+                if ok:
+                    note_ai_outcome(True, runtime=scope)
+                    log_event("caps.health_recovered", "선택한 AI가 다시 응답합니다.", runtime=only)
+                else:
+                    note_ai_unusable(why, runtime=scope)
+                return
             got = detect_runtimes(only, cached=None, probe=True)
             alive = [r for r in got if r.get("source") in _LIVE_ANSWER_SOURCES or
                      (r.get("runtime") in _RUNTIME_SPECS and
                       verify_ai_liveness(r["runtime"], list(_RUNTIME_SPECS[r["runtime"]]["argv"]))[0])]
             if alive:
-                note_ai_outcome(True)
+                for row in alive:
+                    name = row.get("runtime") or row.get("name")
+                    if name == only:
+                        note_ai_outcome(True, runtime=scope)
                 log_event("caps.health_recovered",
                           "연결된 AI 가 다시 응답합니다 — 다음 질문은 정상 처리됩니다.",
                           runtimes=[r.get("runtime") or r.get("name") for r in alive])
@@ -1945,13 +1980,19 @@ def schedule_health_recheck(only: str | None = None) -> bool:
                       "회복 확인이 실패했습니다 — 다음 기회에 다시 확인합니다",
                       level="WARN", exc=exc)
 
+        finally:
+            with _HEALTH_RECHECK_LOCK:
+                _HEALTH_RECHECK_RUNNING.discard(scope)
+
     threading.Thread(target=_run, name="bridge-health-recheck", daemon=True).start()
     return True
 
 
 def reset_health_recheck() -> None:
     """테스트 전용 — 쿨다운이 케이스 간 누수되지 않게."""
-    _HEALTH_RECHECK_AT[0] = 0.0
+    with _HEALTH_RECHECK_LOCK:
+        _HEALTH_RECHECK_AT.clear()
+        _HEALTH_RECHECK_RUNNING.clear()
 
 
 # ── 생존 확인 — 「정상」이라고 말하기 전에 **지금** 답하는지 본다 (TASK-20260903T200000) ──
@@ -2011,13 +2052,14 @@ def confirm_ai_or_report(kind: str, argv: list,
     성공은 `note_ai_outcome(True)`(3상태 `None` → `True`), 실패는 `note_ai_unusable`.
     어느 쪽이든 「모른다」가 남지 않는다 — 그것이 이 함수의 존재 이유다.
     """
+    scope = ai_health_scope(kind)
     ok, why = verify_ai_liveness(kind, argv, timeout)
     if ok:
-        note_ai_outcome(True)
+        note_ai_outcome(True, runtime=scope)
         log_event("caps.liveness_ok", "연결된 AI 가 응답합니다 — 질문을 받을 수 있습니다.",
                   runtime=kind)
         return True
-    note_ai_unusable(why)
+    note_ai_unusable(why, runtime=scope)
     log_event("caps.liveness_fail",
               "연결된 AI 가 응답하지 않습니다 — 화면에 「답할 수 없음」으로 알립니다.",
               level="WARN", runtime=kind, reason=why)

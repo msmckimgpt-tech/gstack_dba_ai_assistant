@@ -236,7 +236,7 @@ def test_windows_body_fallback_preserves_all_layers_at_process_boundary(compose_
     body = runner.compose_prompt(SimpleNamespace(base="https://dqa.invalid", token="test-only"),
                                  {"system_prompt": system, "question": "question", "task_id": "test"})
     monkeypatch.setattr(runner, "_cmdline_budget", lambda: 30000)
-    monkeypatch.setattr(runner, "ai_blocked", lambda: (False, ""))
+    monkeypatch.setattr(runner, "ai_blocked", lambda *args: (False, ""))
     captured = {}
 
     def run(cmd, cancel, **kwargs):

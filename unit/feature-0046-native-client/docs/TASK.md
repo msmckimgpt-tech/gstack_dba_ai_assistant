@@ -9,6 +9,37 @@ feature_status_date: 2026-09-10
 
 # Task
 
+## TASK-20260910-desktop-codex
+
+요청: 설치된 ChatGPT 데스크톱의 Codex로 DQA를 이용할 수 있도록 구현·설정·검증한다.
+Major: 현재 사용자가 연결 구현과 구성을 승인했다. 공식 CLI 실행·기존 로그인 사용 범위이며 벤더 자격증명 읽기/복사, Windows 권한 변경은 하지 않는다. 배포는 included.
+
+### 2.1 Implementation Plan
+
+- `src/client/core.py::{which_runtime,discover_runtime,RuntimeState.label}` 및 `src/client/discovery.py::{locations,DiscoveryCache._scan_once}`: 앱이 관리하는 `%LOCALAPPDATA%/OpenAI/Codex/bin/<hash>/codex.exe`를 별도 Windows 위치로 발견한다. 일반 CLI/WSL과 구분하고 앱 업데이트 뒤 경로 변경을 재탐색한다.
+- `unit/feature-0043-external-llm-bridge/src/agent/discovery.py::_which_ai`: 같은 표준 경로 탐색 규칙을 유지하며 DQA가 선택한 위치로 공식 CLI를 실행한다.
+- client/runner 발견 회귀, 선택·캐시·Windows 실제 실행을 검증한다. 출하 버전과 릴리스노트·FUNCTION/REPORT/REVIEW/Run을 정합한다.
+- 실제 설치된 ChatGPT 앱의 실행 경로는 사용자 폴더에 있고 패키지 내 원본과 SHA-256이 같다. `codex-cli 0.153.4`, 공식 `login status` ChatGPT 로그인 exit 0을 확인했다. 앞선 패키지 직접 실행은 Access denied였으므로 그 경로를 사용하지 않는다.
+
+### 수용 기준
+
+- AC1: DQA에서 다시 찾기 → `codex (ChatGPT 데스크톱)` 위치 발견 → 공식 로그인 상태·실제 응답 확인 → 선택 후 연결 완료 표시.
+- AC2: WSL과 데스크톱이 함께 있으면 둘 다 선택 가능하며 기존 WSL 선택을 유지한다. 사용자가 데스크톱을 선택하면 모델 조회와 질문 모두 같은 Windows 경로에서 실행한다.
+- AC3: 앱 업데이트로 해시 경로가 바뀌면 다음 탐색에서 새 경로를 검증한다. 사라진 실행 파일/읽기 불가/미로그인은 성공으로 표시하지 않는다.
+- AC4: 설치된 DQA에서 데스크톱 Codex로 `DQA_DESKTOP_CODEX_OK` 응답이 표시됨을 확인한다. 코드/fixture/설치본/서버 배포 근거를 각각 기록한다.
+
+### Verification plan
+
+- 관련 Python 회귀·실제 Windows CLI·DQA WebView2 및 배포본 검증.
+- AGENTS §18.8에 따른 security/backend/QA 및 UX/design 독립 리뷰, 최대 3회, 마지막 P1 0.
+- worktree `.worktrees/feature-0046-desktop-codex`, branch `ai/codex/feature-0046-desktop-codex`, base `d4fee180`; 정책 SHA256 `21286d42d52a987af6bed233fb5c050b429ddfa77d33b4979fea3acb4a17fdef`.
+
+### Requested Scope
+
+- [x] 데스크톱 Codex 발견·선택·캐시 갱신 및 회귀
+- [ ] 실제 Windows 앱 로그인/응답·DQA 연결·사용 설정
+- [ ] 독립 리뷰·문서·출하·설치본 재검증
+
 ## TASK-20260910-inapp-update
 
 요청: DQA 클라이언트 내부 동작으로 별도 설치파일 없이 버전을 갱신한다.

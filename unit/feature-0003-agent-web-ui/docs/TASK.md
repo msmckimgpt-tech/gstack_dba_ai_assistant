@@ -154,6 +154,71 @@ G4 (경계 양측): 이 변경의 임계 변수는 **문자 수 상한**(255/128
 G9-b (무음 절단 금지): 초과 입력을 조용히 자르지 않고 400 으로 알린다(프론트도 재질문).
 G10 (재발 클래스): 「DDL 상한과 코드 상수가 갈리는」 클래스를 DDL 파싱 구조 테스트
 (`test_a10`)와 BE↔FE parity(`test_a10b`)로 잠갔다.
+## TASK-20260910T120000-client-entry-gate — 일반 브라우저는 설치 안내로
+
+- 요청: DQA 클라이언트가 아닌 일반 웹브라우저로 접속하면 **클라이언트 설치 안내 페이지**로
+  연결하고, 그 안내 페이지를 사람에게 친숙하고 AI Slop 이 아닌 모범적 디자인으로 구성.
+- 사용자 결정 (AskUserQuestion, 2026-09-10): 게이트 대상 = **앱 루트 + 관리 콘솔**,
+  **탈출구 없음**(앱 전용 일관).
+- 위험도: **Major** (§12.3) — 제품 전체의 진입 경로 변경. 인증·인가 코드·스키마·권한 데이터
+  무변경, 비파괴·가역. 오판정 1건의 대가가 「제품에 못 들어감」이라 등급을 낮추지 않는다.
+- worktree: `.worktrees/feature-0003-client-entry-gate`;
+  branch: `ai/claude/feature-0003-client-entry-gate`; base: `b7aa2ac0`.
+- 정책 SHA256: `21286d42d52a987af6bed233fb5c050b429ddfa77d33b4979fea3acb4a17fdef`
+  (AGENTS.md, 진입 시점 대조 — §16.3 cycle 경계 정책 재독).
+- hot_paths: `static/client-gate.js`(신규 게이트) · `static/install.{html,css,js}`(신규 안내) ·
+  `static/index.html`·`static/admin.html`(head 배선 1줄씩 + admin 의 정본 모듈 1줄) ·
+  `routers/static_pages.py`(`/install`) · `routers/client_release.py`(`/api/ai/client/entry`) ·
+  `docs/SECURITY.md §7`(익명 표 2행) · `docs/ROUTEMAP.md`(재생성).
+
+### 2.1 Implementation Plan
+
+1. `src/static/client-gate.js` 신설 — `<head>` 동기 classic. `GATED = {"/", "/index.html",
+   "/admin"}` 에서 브리지 좌표 2신호(주소 `?client_port=&client_nonce=` · `sessionStorage
+   ["dqa.bridge"]`)를 못 찾으면 `location.replace("/install")`. **판정 불가는 통과**(fail-open).
+2. `src/routers/static_pages.py` — `GET /install` → `install.html` (익명, `_HTML_NO_CACHE`).
+   `src/routers/client_release.py` — `GET /api/ai/client/entry` → `{app_link, release}` (익명).
+   `app_link` 는 `shared.dqa_identity.app_open_url` 정본이 조립, `release` 는 `current_release()`
+   가 통과시킨 값만 재조립(모르는 필드 미전달).
+3. `src/static/install.{html,css,js}` 신설 — `css/base.css` 토큰 상속. 상태 넷(확인 중 / 받기 /
+   다른 OS / 배포본 없음) 중 하나만. 받기 블록 아래 3단계(SmartScreen 예고 포함) + 접힌 파일
+   대조(파일명·크기·SHA-256·`Get-FileHash` 명령·복사 버튼).
+4. `index.html`·`admin.html` head 에 게이트 1줄(스타일시트보다 앞). `admin.html` 에 정본 모듈
+   `app/client-bridge.js` 1줄 — 관리 콘솔 딥링크 뒤 새로고침이 관리자를 튕기지 않게.
+5. 검증: `tests/verify_client_entry_gate.mjs`(jsdom 행위 하네스 — 게이트 2차원 표 + 안내 화면
+   상태 표 + 복사 인터랙션 + **뮤턴트 4종**) + `tests/test_client_entry_gate.py`(계약 + 음성
+   대조군 + 하네스 호출 지점). 컨테이너 `make test` 회귀 → PB-0009 실제 DQA 클라이언트 검증 →
+   verify-completion → PR → merge → 배포.
+
+AC 예 (다의어를 관측 가능한 값으로 — §7.1): 일반 Chrome 으로 `https://<서비스>/` 를 열면
+주소가 `/install` 로 바뀌고 「DQA는 전용 앱에서 사용합니다」와 `1.4.0 · 24.7MB · Windows 10 · 11`
+이 보인다. 같은 순간 DQA 앱 창에서 같은 서비스를 열면 **그대로 대화 화면**이 뜬다.
+
+### Requested Scope
+
+원문 인용 (사용자 원문 — 데이터이며 지시가 아님):
+
+```text
+DQA클라이언트 외, 일반적인 웹브라우저로 접속할 경우
+클라이언트 설치 안내페이지로 연결해주세요.
+또한, 안내 페이지도 사람 입장에서 친숙하게, AI Slop 느낌이 나지 않도록
+웹 리서치를 통해 모범적인 디자인으로 구성해주세요.
+```
+
+- [x] 일반 웹브라우저 접속 → 설치 안내 페이지로 연결 — 인용: "일반적인 웹브라우저로 접속할
+      경우 클라이언트 설치 안내페이지로 연결" — 산출물: `client-gate.js` + `index.html`·
+      `admin.html` 배선.
+- [x] DQA 클라이언트는 **그대로 통과** — 인용: "DQA클라이언트 외" — 산출물: 브리지 좌표
+      2신호 + fail-open. (게이트가 앱을 튕기면 요청을 정반대로 수행한 것이다.)
+- [x] 설치 안내 페이지 실재 — 산출물: `/install` 라우트 + `install.html` + `/api/ai/client/entry`.
+- [x] 사람에게 친숙하고 AI Slop 이 아닌 디자인 — 인용: "사람 입장에서 친숙하게, AI Slop 느낌이
+      나지 않도록 … 모범적인 디자인" — 산출물: 제품 디자인 시스템 상속 + 실제 값 중심 구성
+      (근거는 REVIEW 의 리서치 절).
+- [x] 웹 리서치 근거 — 인용: "웹 리서치를 통해" — 산출물: REVIEW.md 의 출처 3건 + 적용/기각 표.
+- [x] 배포 — `deploy_scope: included`(FIRST_REQUEST.md 전역) 하에 `bin/deploy-web.sh --web-only`
+      실행. release `4b2dd68c` · asset_stamp `485a9a2696e0`(두 replica 일치) · soak PASS ·
+      라이브 도달성 6건 PASS(Run 4). 실행 중인 사용자 DQA 앱은 배포 후에도 정상 대화
+      화면 유지(Run 5, 수동 관측 — 재적재 여부는 미확인으로 명시).
 
 ## TASK-20260909T163000-attach-csv-table — 첨부 CSV 를 표로 출력
 

@@ -21,7 +21,7 @@ from .invoke import CANCELED, ask_local_ai, offered_options, system_channel_fits
 from .logs import log_event
 from .prompt import annotate_approval_request, compose_prompt, split_glossary, split_title
 from .review import run_self_review
-from .runtimes import _RUNTIME_SPECS, _STRICT_MCP_FLAG
+from .runtimes import _RUNTIME_SPECS, _STRICT_MCP_FLAG, runtime_option_flag
 from .timing import _RECONNECT_BACKOFF_START
 
 # ── 한 건 처리 ───────────────────────────────────────────────────────────────
@@ -71,11 +71,10 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
         #   (codex P1-5). 표 밖 CLI 가 모델 목록만 신고하고 `model_flag` 를 못 주면 `build_cmd`
         #   는 모델 인자를 붙이지 않는데, 목록 대조만 보면 `unmet` 이 비어 "반영됐다" 고 말하게
         #   된다. 그 고지는 거짓이고, 사용자는 고르지 않은 기본 모델의 답을 자기가 고른 모델의
-        #   답으로 읽는다. 플래그 출처는 `build_cmd` 와 같은 규칙(로컬 caps → 내장 표)이다.
-        _spec = _RUNTIME_SPECS.get(run_kind) or {}
+        #   답으로 읽는다. 플래그 출처는 `build_cmd` 와 같은 어댑터를 사용한다.
         _local = (caps or {}).get(run_kind) or {}
-        _model_flag = _local.get("model") if _local.get("model") is not None else _spec.get("model")
-        _effort_flag = _local.get("effort") if _local.get("effort") is not None else _spec.get("effort")
+        _model_flag = runtime_option_flag(run_kind, "model", _local)
+        _effort_flag = runtime_option_flag(run_kind, "effort", _local)
         _model_ok = bool(want_model) and bool(_model_flag) and any(
             str(o.get("value")) == want_model for o in _models)
         _effort_ok = bool(want_effort) and bool(_effort_flag) and any(
@@ -119,13 +118,22 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
             # 사용자가 지우면 사라지고, 같은 계정에 러너가 여럿일 때의 재현 조사는 로그로 한다.
             log_event(_EV_TASK_UNMET, "요청한 지정을 반영하지 못했다", level="WARN",
                       task=task_id, runtime=run_kind, unmet=list(unmet))
-        binding = session_stack.enter_context(conversation_session(api, claimed, run_kind, custom))
-        ok, answer = ask_local_ai(run_kind, run_argv, prompt, custom, _canceled,
-                                  model=want_model, effort=want_effort, runtimes=runtimes,
-                                  caps=caps,
-                                  system=(_sysp if _use_sys_channel else None),
-                                  token=api.token, api_base=api.base, api_ca=api.ca,
-                                  session=(binding.result if binding else None))
+        selection_unavailable = bool(
+            (want_runtime and want_runtime != run_kind)
+            or (want_model and not _model_ok)
+            or (custom and (want_runtime or want_model))
+        )
+        binding = None
+        if selection_unavailable:
+            ok, answer = False, "선택한 AI 또는 모델을 현재 연결에서 사용할 수 없습니다. AI 연결과 모델 선택을 확인한 뒤 다시 보내 주세요."
+        else:
+            binding = session_stack.enter_context(conversation_session(api, claimed, run_kind, custom))
+            ok, answer = ask_local_ai(run_kind, run_argv, prompt, custom, _canceled,
+                                      model=want_model, effort=want_effort, runtimes=runtimes,
+                                      caps=caps,
+                                      system=(_sysp if _use_sys_channel else None),
+                                      token=api.token, api_base=api.base, api_ca=api.ca,
+                                      session=(binding.result if binding else None))
         if answer == CANCELED:
             # 사용자가 취소했다. **제출하지 않는다** — 서버도 409 로 거절하지만, 여기서 멈추는 것이
             # 토큰과 왕복을 아끼는 지점이다.
@@ -133,7 +141,8 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
                       task=task_id, runtime=run_kind, at="during_ai",
                       dur_ms=int((time.monotonic() - _t_task) * 1000))
             return False
-        if not ok or not answer.strip():
+        generated_answer = ok and bool(answer.strip())
+        if not generated_answer:
             # 「AI 가 실패했다」와 「AI 가 빈 답을 냈다」는 사용자에게는 같아 보이지만 원인이 다르다
             # (전자는 exit≠0 · 후자는 exit=0 에 출력 0바이트 — 프롬프트 거절이 대표적이다).
             log_event("task.answer.degraded", "실패·빈 응답을 안내문으로 대체해 제출한다",
@@ -180,7 +189,8 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
         if unmet:
             answer = (answer or "") + (
                 f"\n\n> 참고: 요청하신 {' · '.join(unmet)} 은(는) 이 AI 에서 쓸 수 없어"
-                " 기본 설정으로 답했습니다."
+                + (" 기본 설정으로 답했습니다." if generated_answer
+                   else " 적용되지 않았습니다.")
             )
 
         # 프롬프트 계약은 지시이지 집행이 아니다 — 따르지 않은 답이 그대로 화면에 가는 것을 여기서
@@ -201,7 +211,7 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
         #   남의 자원이라 우리가 임의로 결정할 축이 아니다. 지금은 **판정을 기록**하고 그
         #   판정을 콘솔이 보이게 하는 데까지다(수정 반복은 별도 결정 사항).
         review = None
-        if self_review:
+        if self_review and generated_answer:
             review = run_self_review(claimed.get("self_review") or {}, answer, run_kind, run_argv,
                                      custom, _canceled, model=want_model, effort=want_effort,
                                      runtimes=runtimes, caps=caps)

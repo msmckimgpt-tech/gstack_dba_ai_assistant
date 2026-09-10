@@ -8,6 +8,129 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260910T134800-client-entry-gate-deploy [SKIPPED:non-policy-doc] — 배포 결과 원장 반영
+
+§18.8 dispatch 표 첫 행(비정책 doc-only). 코드·정책 문서 변경 0 — 직전 cycle 의 Run·TASK·REPORT
+에 배포 도달성과 실행 중인 앱 관측을 반영한 기록 전용 변경이다. 판정 근거는 Run 4·5 본문에 있다.
+
+## REV-20260910T120000-client-entry-gate [CODEX:client-entry-gate] — 일반 브라우저는 설치 안내로 (Major §12.3)
+
+- **Trigger**: `UI/page/layout` + `API/endpoint` keyword matched (§18.8 dispatch 표 3·4행 —
+  화면·페이지·레이아웃 → ux·design / 엔드포인트 → backend·security·qa).
+- **채널**: `/codex review` 경로(§18.8.1 항목 2 — `[CODEX:*]` index entry 를 check #9 가
+  accepted review 로 인식). 이 저장소에는 ux/design/security subagent 정의 파일이 없다
+  (`.claude/agents/` 에 `improve-fit-reviewer` 만) — 2026-09-09
+  `REV-20260909T170000-attach-csv-table` 이 같은 상황에서 택한 경로와 같다.
+  `codex exec -s read-only`, `model_reasoning_effort=high`, 판정 기준으로 `docs/CODE_REVIEW.md`·
+  `docs/SECURITY.md §7`·`AGENTS.md §16.6` 를 프롬프트에 명시했다.
+- **Verdict**: **PASS** — `[P1]` 2건 · `[P2]` 3건, **전건 재현 후 수정**. 다섯 건 모두 실제
+  결함이었고 그중 둘은 **정상 앱 창을 쫓아내는** 축이었다.
+
+### 웹 리서치 — 「AI Slop 이 아닌」의 조작적 정의
+
+사용자 요청에 "웹 리서치를 통해 모범적인 디자인" 이 명시돼 있어, 먼저 **무엇을 피할 것인가**를
+출처로 고정했다. 세 조사의 공통 지문:
+
+| 출처 | 지목한 AI-slop 지문 |
+|---|---|
+| [925studios — AI Slop Web Design Guide](https://www.925studios.co/blog/ai-slop-web-design-guide) | Inter 기본값 · 보라→파랑 그라디언트 · 공허한 헤드라인("Build the future") · 스톡/3D 일러스트 · 모든 카드 동일 16px radius·24px padding · 마이크로 인터랙션 부재 |
+| [vibecodekit — AI Slop Design](https://vibecodekit.dev/ai-slop-design) | 상시 다크 + 네온 글로우 · 전면 글래스모피즘 · 히어로 뒤 보라 orb · 동일 가중치 카드 6장 · 모든 hover 에 bounce, 모든 스크롤에 fade-up |
+| [DesignRush — App Landing Page Examples](https://www.designrush.com/best-designs/apps/trends/app-landing-pages) | (대조군) 마케팅 랜딩의 관례 — 히어로·소셜 프루프·기능 나열 |
+
+**세 번째는 의도적으로 기각했다.** 이 화면의 방문자는 잠재 고객이 아니라 **이미 계정이 있는
+사내 사용자가 문을 잘못 연 것**이다. 설득할 것이 없으므로 히어로·기능 나열·사회적 증거를
+넣지 않는다 — 그것이 이 요청에서 「AI Slop 느낌」의 가장 큰 원천이었을 것이다.
+
+### 적용 — 회피가 아니라 «상속»
+
+가장 강한 anti-slop 조치는 새 디자인을 발명하지 않는 것이었다. `css/base.css` 가 이미
+의도적으로 고른 시스템을 갖고 있다(warm canvas `#f7f7f4` · Geist · 시맨틱 색 토큰 ·
+`--r-xs~--r-xl` 다단 radius). `install.css` 는 값을 **하나도 정의하지 않고** 그 토큰을 쓴다.
+
+| 리서치 지문 | 이 화면 |
+|---|---|
+| Inter 기본값 | `var(--font)` = Geist (제품과 동일) |
+| 보라→파랑 그라디언트 | 그라디언트 0. 강조는 `--primary` 단색 하나 |
+| 공허한 헤드라인 | 「DQA는 전용 앱에서 사용합니다」 — 방문자가 방금 겪은 사실의 진술 |
+| 스톡·3D 이미지 | 이미지 0. 브랜드 마크 36px 하나 |
+| 균일한 카드·radius | 행동 블록만 표면을 갖고(`--r-lg`), 단계는 표면 없이 좌측 괘선. 버튼 `--r-sm`, 지문 칩 `--r-xs` |
+| 장식 모션 | `transition` 은 CTA 배경색 120ms 하나. fade-up·bounce 0 |
+
+그리고 화면을 **실제 값**으로 채웠다 — 버전·용량(24.7MB)·게시일·SHA-256·`Get-FileHash` 명령.
+검증 가능한 수치는 생성형 문구가 흉내 낼 수 없는 유일한 재료이고, 이 화면은 **미서명 설치기
+실행을 안내**하므로(feature-0046 §4) 그 대조 수단을 함께 주는 것이 정직성 요구이기도 하다
+(`docs/SECURITY.md §7` share 행의 피싱 모사 주의와 같은 항).
+
+문안 예산은 §16.8 을 적용했다 — 화면이 이미 보여 주는 조작법·내부 구조·설계 정당화는 넣지
+않고, **넣은 것은 둘**이다: 이 화면이 무엇인지 1문장, 그리고 **SmartScreen 경고 예고**(비가역은
+아니지만 사용자가 사고로 오인해 멈추는 지점).
+
+### codex `[P1]` 2건 — 둘 다 「정상 앱 창을 쫓아낸다」
+
+| # | 지적 | 재현 | 조치 |
+|---|---|---|---|
+| 1 | 미로그인 브라우저의 **외부 AI 인가** 흐름이 막힌다. `oauth_as.oauth_authorize` 가 `/?next=<인가 URL>` 로 되돌리는데 게이트가 그 착지점을 삼켜 `next` 가 소실 | ✅ `routers/oauth_as.py:205` 코드 확인 + 실 Chrome 재현 | 게이트에 **그 착지점 하나만** 예외(`LOGIN_RETURN_PREFIX = "/api/ai/oauth/authorize"`, 접두 «시작» 검사). 서버 라우트 경로와의 일치는 `test_c10` 이 정본 대조로 잠근다 |
+| 2 | `/admin` 딥링크에서 **판정 전 새로고침**이 앱 창을 쫓아낸다. `client-bridge.js` 가 비동기 보관을 시작하면서 주소의 좌표를 **먼저** 지워, 그 사이 새로고침하면 신호가 0 | ✅ jsdom 에서 ping 미해결 상태 재현 | 정본 모듈의 주소 정리를 **판정 이후**로 이동(`deferStrip` + `stripCoords` 콜백). 새로고침이 같은 주소를 다시 보내므로 좌표로 다시 통과한다 |
+
+### codex `[P2]` 3건
+
+| # | 지적 | 조치 |
+|---|---|---|
+| 3 | 저장소 **쓰기** 실패(quota)가 fail-open 에서 빠져 있다 — `getItem` 만 보면 「신호가 살아남지 못하는 창」을 「앱이 아님」으로 읽는다 | 게이트에 쓰기 probe(`storageIsUsable`) 추가. 신호가 없을 때 **쓸 수 있는 창인지**를 마지막으로 묻는다 |
+| 4 | 설치기를 철회하면 **이미 설치한 사람의 앱 열기 링크까지** 사라진다 (두 축을 결합) | 「이미 설치했다면」 줄을 받기 블록 **밖**으로 옮기고 `renderAppLink` 로 분리. 배포본 없어도 남는다 |
+| 5 | 통신 장애를 「서버에 설치 파일이 없습니다」로 **확정 표시** | 상태를 갈랐다 — `actUnavailable`(불러오지 못함 + [다시 시도]) vs `actNoRelease`(게시된 것이 없음). 사용자가 할 일이 다르다 |
+
+> 다섯 건 중 **셋(1·2·3)이 「게이트가 정당한 사용자를 막는」 축**이었다. 이 변경에서 가장 비싼
+> 실패가 그것이라고 프롬프트에 적어 둔 것이 유효했다 — 리뷰어에게 «무엇이 최악인가»를 말하면
+> 그쪽을 판다.
+
+### 적용면 전수감사 — 「`/` 로 되돌리는 서버 경로」가 또 있는가 (§16.7 G8)
+
+codex 의 P1-1 은 **한 경로**를 짚었다. 같은 클래스가 더 있는지 `RedirectResponse` 를 전수로 훑었다:
+
+| 경로 | 되돌리는 곳 | 게이트에 걸리는가 |
+|---|---|---|
+| `routers/oauth_as.py:205` — 외부 AI 인가(미로그인) | `/?next=<인가 URL>` | **걸린다** → 예외 처리(위 P1-1) |
+| `routers/auth.py:589~628` — Google 로그인 콜백 | `/` · `/?oauth_error=…` | **안 걸린다.** 이 왕복은 **같은 탭**에서 일어나고(`index.html` 의 링크에 `target` 없음 → WebView2 안에서 이동), `sessionStorage` 는 다른 origin 을 다녀와도 그 탭·그 origin 에 남는다. 앱 창은 좌표를 그대로 갖고 돌아온다. 브라우저 사용자는 애초에 로그인 화면에 닿지 못하므로 이 흐름을 시작할 수 없다 |
+
+그 외 `/` 로 보내는 서버 경로는 없다. 프런트에서 `/` 로 보내는 것은
+`admin.js` 의 미인증 복귀 하나이고, 그것은 앱 창에서도 좌표를 들고 이동한다(실 브라우저 A4 실측).
+
+### 하네스 실효성 — 뮤턴트 4종 KILL + 등가 뮤턴트 1건 식별
+
+결함 클래스를 달리한 뮤턴트를 정본에 실제로 적용해(적용 여부를 diff 로 확인) 돌렸다:
+①항상 통과 ②저장 신호 무시(새로고침 튕김) ③관리 콘솔 누락 ④없는 것을 광고. **전건 KILL.**
+
+④는 처음에 **살아남았다.** 조사해 보니 `if (!release)` 만 뒤집으면 `renderRelease(null)` 이
+던지고 그 예외를 `.catch(failed)` 가 받아 **같은 화면**을 만든다 — 즉 **등가 뮤턴트**이고
+살아남는 것이 정상이었다. 「생존 = 구멍」으로 읽었다면 있지도 않은 테스트를 더 썼을 것이다.
+되메우는 방어선까지 함께 걷어 낸 뮤턴트로 교체해 KILL 을 얻었다.
+
+⚠ 이 수치는 **내가 고른 표본**이라 사각지대 부재의 증거가 아니다 — 실제로 codex 가 낸 5건 중
+**5건 모두** 이 뮤턴트 집합이 가리키지 않던 축이었다.
+
+### 하네스 자신의 거짓 신호 2건 (기록)
+
+- **jsdom 기본 UA 에 `linux` 가 들어 있다**(`Mozilla/5.0 (linux) … jsdom/22.1.0`), 그리고 이
+  버전은 `new JSDOM(html, { userAgent })` 옵션을 **무시한다**(실측). 그대로 뒀다면 모든 회차가
+  「다른 OS」로 판정돼 **Windows 경로가 한 번도 검증되지 않은 채 초록**이 났다.
+- `visit()` 의 가짜 저장소에 `setItem` 이 없어, P2-3 수정 직후 **모든 회차가 fail-open 으로
+  통과**할 뻔했다(표 전체가 조용히 무의미해지는 형태).
+
+둘 다 「하네스가 제품이 아니라 자기를 시험하는」 형태다. 표에 «보낸다»와 «안 보낸다»가 함께
+있는 구조가 첫 번째를 즉시 드러냈다.
+
+### 검증되지 않은 것 (정직 표기)
+
+- **실제 DQA 클라이언트(WebView2)에서 확인하지 않았다.** 이 앱에는 CDP 등 자동화 진입점이
+  없고(`client/window.py` 에 remote-debugging 인자 없음), 사용자의 앱(PID 12344)이 실행
+  중이라 §16.6 에 따라 종료하지 않았다. 대신 **실 Windows Chrome**(같은 Chromium 엔진)에서
+  배포 파일 원본으로 12건을 실측했고, 그중 A3 가 배포 자동 반영이 타는 바로 그 경로
+  (`ui-refresh.js` 의 `location.reload()` → sessionStorage 생존)다. 그 Run 은 `Environment:
+  Windows-browser` 로 기록했다 — DQA-client PASS 로 합산하지 않는다(§15.4.1).
+- 라이브 서비스에 배포하기 전의 판정이다. 배포 후 도달성 확인은 Run 의 배포 블록에 남긴다.
+- macOS·Linux 실기기에서 「다른 OS」 화면을 본 것이 아니다 — UA 를 갈아 끼운 jsdom 판정이다.
+
 ## REV-20260910T090000-attach-csv-table-deploy [SKIPPED:non-policy-doc] — 배포 결과 원장 반영
 
 §18.8 dispatch 표 첫 행(비정책 doc-only). 코드·정책 문서 변경 0 — 직전 cycle 의 Run·TASK·REPORT
