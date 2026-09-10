@@ -1057,3 +1057,12 @@ edit_policy: append-only
 ## CHG-20260910T111451-icon-integration-record
 - Timestamp: 2026-09-10T11:14:51+09:00
 - merge commit combined diff에서 checkbox/CHG/review 항목을 읽지 못한 post-commit 검사에 대해 정상 후속 커밋으로 이번 cycle 완료 기록을 추가한다. 제품 bytes는 변경하지 않는다.
+
+## CHG-20260910T113000-inapp-update
+
+- Session: codex:root:01a08911-d62c-7d32-85cc-893b77a3161f
+- Related TASK: TASK-20260910-inapp-update
+- Reason: 매 갱신 때 설치기를 실행하던 동작을 앱 내부 ZIP 적용으로 바꾸라는 사용자 요청.
+- Changes: 1.4.0 updater는 Update ZIP만 수신한다. 경로·압축량·무결성·실행 검사 후 새 슬롯을 활성화하고 현재 프로세스를 유지한다. builder/publisher/server는 Setup/ZIP을 같은 채널로 게시·철회하고 동시 게시 및 원본 변조를 거부한다. 기존 설치기와 공통 mutex, 같은 버전 불변 파일, 제거 시 소유 slots 정리를 적용한다.
+- Migration: 1.3.x 이하의 최초 전환만 기존 앱 내 설치기 경로가 필요하다. 1.2.x의 기존 자체 종료는 소급 변경할 수 없다.
+- Verification: test-runs.d/20260910-inapp-update.md에 CLI/실제 Windows/채널 축을 구분 기록.

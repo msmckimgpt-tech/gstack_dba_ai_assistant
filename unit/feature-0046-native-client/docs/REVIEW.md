@@ -1430,3 +1430,21 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Human Approval Needed: no
 - 마지막 독립 확인에서 P1/P2 0. 실제 Windows 실패보존·설치·제거·작업표시줄 및 디자인 증적을 검토했다. 수동 설치 실패 완료화면 픽셀 미검증은 원장에 명시했고 차단 결함으로 판정하지 않았다.
 - [리뷰](reviews/20260910-transparent-release.md), [실측](test-runs.d/20260910-transparent-icon-release.md).
+
+## REV-20260910T113000-inapp-update [SUBAGENT:backend-security-qa] — PASS
+- Related TASK: feature-0046-native-client / TASK-20260910-inapp-update
+- Trigger: API/응답 계약 · package/실행 파일 갱신
+- Timestamp: 2026-09-10T11:30:00+09:00
+- Verdict: PASS (마지막 P1 0, P2 0; 3라운드)
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260910-inapp-update-backend-security-qa.md
+- Human Approval Needed: no
+
+## REV-20260910T113001-inapp-update-ux [SUBAGENT:ux-design] — PASS
+- Related TASK: feature-0046-native-client / TASK-20260910-inapp-update
+- Trigger: dialog/확인창 · notification/완료 알림 · release notes/사용자 공지
+- Timestamp: 2026-09-10T11:30:00+09:00
+- Verdict: PASS (마지막 P1 0; 2라운드)
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260910-inapp-update-ux-design.md
+- Human Approval Needed: no
+
+실행 근거: 사용자가 앱 내부 무설치 갱신 구성을 직접 요청했다. 기존 승인된 per-user 슬롯/신뢰 서버·CA/사용자 확인 경계를 유지한다. /client는 동일 제품 바이너리의 ZIP 포장만 추가하며 계정 데이터·새 인증 경로를 노출하지 않는다. deploy_scope included는 wrapper FIRST_REQUEST 및 AGENTS §16.5.1의 기존 선언이다. review-panel 글로벌 resolver는 프로젝트 미등록으로 실패했고, 다른 프로젝트 명령을 대체 호출하지 않고 §18.8 명시 독립 subagent 절차를 수행했다.

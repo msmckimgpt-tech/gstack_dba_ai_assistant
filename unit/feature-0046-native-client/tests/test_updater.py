@@ -58,19 +58,21 @@ def release_mod():
 
 def _setup_bytes(size: int = updater.MIN_SETUP_BYTES) -> bytes:
     """PE 처럼 보이는 더미. **실제 실행 파일이 아니다** — 검사만 통과한다."""
-    return b"MZ" + b"\0" * (size - 2)
+    return b"PK" + b"\0" * (size - 2)
 
 
 def _manifest(**over) -> bytes:
     payload = _setup_bytes()
     doc = {
         "version": "9.9.9",
-        "filename": "DQAConnect-Setup-9.9.9.exe",
+        "filename": "DQAConnect-Update-9.9.9.zip",
         "sha256": hashlib.sha256(payload).hexdigest(),
         "size": len(payload),
         "notes": "테스트",
     }
     doc.update(over)
+    package = {k: doc.pop(k) for k in ("filename", "sha256", "size")}
+    doc["update"] = package
     return json.dumps(doc).encode("utf-8")
 
 
@@ -103,7 +105,7 @@ def test_manifest_happy_path():
     got = updater.parse_manifest(_manifest(), current="1.0.0")
     assert got is not None
     assert got.version == "9.9.9"
-    assert got.filename == "DQAConnect-Setup-9.9.9.exe"
+    assert got.filename == "DQAConnect-Update-9.9.9.zip"
 
 
 def test_manifest_rejects_when_not_newer():
@@ -113,11 +115,11 @@ def test_manifest_rejects_when_not_newer():
 
 @pytest.mark.parametrize("name", [
     "../../etc/passwd",
-    "DQAConnect-Setup-9.9.9.exe/../evil.exe",
+    "DQAConnect-Update-9.9.9.zip/../evil.exe",
     "evil.exe",
-    "DQAConnect-Setup-9.9.9.exe.bat",
-    "-DQAConnect-Setup-9.9.9.exe",
-    "sub/DQAConnect-Setup-9.9.9.exe",
+    "DQAConnect-Update-9.9.9.zip.bat",
+    "-DQAConnect-Update-9.9.9.zip",
+    "sub/DQAConnect-Update-9.9.9.zip",
 ])
 def test_manifest_rejects_dangerous_filenames(name):
     """파일명이 곧 **받을 경로**다. 이름 하나로 다른 파일을 받게 두지 않는다."""
@@ -126,7 +128,7 @@ def test_manifest_rejects_dangerous_filenames(name):
 
 def test_manifest_rejects_when_filename_and_version_disagree():
     """어느 쪽을 믿을지 고르는 순간 나머지 하나는 검증이 아니라 장식이 된다."""
-    bad = _manifest(filename="DQAConnect-Setup-9.9.8.exe")
+    bad = _manifest(filename="DQAConnect-Update-9.9.8.zip")
     assert updater.parse_manifest(bad, current="1.0.0") is None
 
 
@@ -157,7 +159,7 @@ def test_manifest_ignores_any_url_it_carries():
 # ── 3. 무결성 4축 ───────────────────────────────────────────────────────────────
 
 def _update_of(payload: bytes) -> updater.Update:
-    return updater.Update(version="9.9.9", filename="DQAConnect-Setup-9.9.9.exe",
+    return updater.Update(version="9.9.9", filename="DQAConnect-Update-9.9.9.zip",
                           sha256=hashlib.sha256(payload).hexdigest(),
                           size=len(payload))
 
@@ -181,7 +183,7 @@ def test_verify_rejects_non_executable():
 
 def test_verify_rejects_digest_mismatch():
     payload = _setup_bytes()
-    upd = updater.Update(version="9.9.9", filename="DQAConnect-Setup-9.9.9.exe",
+    upd = updater.Update(version="9.9.9", filename="DQAConnect-Update-9.9.9.zip",
                          sha256="0" * 64, size=len(payload))
     assert not updater.verify(payload, upd)
 
@@ -263,14 +265,11 @@ def test_due_recovers_when_the_clock_went_backwards(tmp_path):
 
 # ── 6. 적용 ─────────────────────────────────────────────────────────────────────
 
-def test_apply_refuses_a_missing_file(tmp_path):
-    assert updater.apply(tmp_path / "nope.exe") is False
-
-
-def test_silent_args_preserve_the_app():
-    """무음 설치는 `[Run]` 의 `skipifsilent` 를 타지 않는다 — 우리가 다시 띄워야 한다."""
-    assert "/RELAUNCH" not in updater.SILENT_ARGS
-    assert "/SILENT" in updater.SILENT_ARGS
+def test_new_client_refuses_installer_only_manifest():
+    raw = json.dumps({"version": "9.9.9", "filename": "DQAConnect-Setup-9.9.9.exe",
+                      "size": 1_000_000, "sha256": "0" * 64}).encode()
+    assert updater.parse_manifest(raw, current="1.4.0") is None
+    assert updater.parse_manifest_detail(raw, current="1.4.0")[1] == "bad-manifest"
 
 
 def _iss_code_only(text: str) -> str:
@@ -298,7 +297,7 @@ def test_installer_relaunches_only_for_our_flag():
 
 
 def test_confirm_text_says_what_is_lost():
-    upd = updater.Update(version="9.9.9", filename="DQAConnect-Setup-9.9.9.exe",
+    upd = updater.Update(version="9.9.9", filename="DQAConnect-Update-9.9.9.zip",
                          sha256="0" * 64, size=updater.MIN_SETUP_BYTES)
     text = updater.confirm_text(upd, connected=True)
     assert "9.9.9" in text and version.CLIENT_VERSION in text
@@ -310,10 +309,10 @@ def test_confirm_text_says_what_is_lost():
 # ── 7. 세 곳의 이름 규약이 같다 ─────────────────────────────────────────────────
 
 @pytest.mark.parametrize("name,ok", [
-    ("DQAConnect-Setup-1.1.0.exe", True),
-    ("DQAConnect-Setup-10.20.30.exe", True),
-    ("DQAConnect-Setup-1.1.0-rc1.exe", False),
-    ("../DQAConnect-Setup-1.1.0.exe", False),
+    ("DQAConnect-Update-1.1.0.zip", True),
+    ("DQAConnect-Update-10.20.30.zip", True),
+    ("DQAConnect-Update-1.1.0-rc1.zip", False),
+    ("../DQAConnect-Update-1.1.0.zip", False),
     ("DQAConnect.exe", False),
 ])
 def test_setup_name_rule_is_identical_in_three_places(name, ok, release_mod):
@@ -323,9 +322,9 @@ def test_setup_name_rule_is_identical_in_three_places(name, ok, release_mod):
     원인은 세 파일을 나란히 놓고 봐야만 보인다.
     """
     publish = _load("publish_release_under_test", _PUBLISH)
-    assert bool(updater.SETUP_NAME_RE.match(name)) is ok
-    assert bool(release_mod.SETUP_NAME_RE.match(name)) is ok
-    assert bool(publish.SETUP_NAME_RE.match(name)) is ok
+    assert bool(updater.UPDATE_NAME_RE.fullmatch(name)) is ok
+    # End-to-end publisher/server/package contracts are exercised in test_release_channel.
+    assert publish.MIN_SETUP_BYTES == updater.MIN_SETUP_BYTES
 
 
 def test_client_and_server_agree_on_the_download_prefix(release_mod):
@@ -406,7 +405,7 @@ def test_update_apply_is_a_confirmed_action():
 def test_confirm_text_for_update_reports_the_version_it_will_install():
     class _Br:
         pending_update = updater.Update(
-            version="9.9.9", filename="DQAConnect-Setup-9.9.9.exe",
+            version="9.9.9", filename="DQAConnect-Update-9.9.9.zip",
             sha256="0" * 64, size=updater.MIN_SETUP_BYTES)
         connected = False
 
@@ -427,7 +426,7 @@ def test_update_now_refuses_in_a_source_tree(tmp_path, monkeypatch):
     monkeypatch.setattr(updater, "running_frozen", lambda: False)
     plan = core.ConnectPlan(base="https://x.example", token="t", home=tmp_path / "home")
     br = bridge_mod.Bridge(plan, confirm=lambda _m: True)
-    upd = updater.Update(version="9.9.9", filename="DQAConnect-Setup-9.9.9.exe",
+    upd = updater.Update(version="9.9.9", filename="DQAConnect-Update-9.9.9.zip",
                          sha256="0" * 64, size=updater.MIN_SETUP_BYTES)
     try:
         got = br.update_now(confirmed=True, target=upd)
@@ -452,7 +451,7 @@ def test_status_carries_the_version_and_pending_update(tmp_path):
     plan = core.ConnectPlan(base="https://x.example", token="t", home=tmp_path / "home")
     br = bridge_mod.Bridge(plan, confirm=lambda _m: True)
     br.pending_update = updater.Update(
-        version="9.9.9", filename="DQAConnect-Setup-9.9.9.exe",
+        version="9.9.9", filename="DQAConnect-Update-9.9.9.zip",
         sha256="0" * 64, size=updater.MIN_SETUP_BYTES)
     try:
         got = br.act("status", {})
@@ -514,7 +513,7 @@ def test_tray_says_so_when_the_update_fails(monkeypatch):
     이 경로에는 로그를 보여 줄 패널이 없다 — 실패를 `_say` 에만 남기면 사용자는 자기가
     승인한 동작의 결과를 어디서도 볼 수 없다.
     """
-    upd = updater.Update(version="9.9.9", filename="DQAConnect-Setup-9.9.9.exe",
+    upd = updater.Update(version="9.9.9", filename="DQAConnect-Update-9.9.9.zip",
                          sha256="0" * 64, size=updater.MIN_SETUP_BYTES)
     said, br = _run_flow(monkeypatch, upd,
                          {"ok": False, "error": "download_failed",
@@ -525,7 +524,7 @@ def test_tray_says_so_when_the_update_fails(monkeypatch):
 
 def test_tray_stays_quiet_when_the_user_declined(monkeypatch):
     """자기 선택을 되돌려 알리는 대화상자는 소음이다."""
-    upd = updater.Update(version="9.9.9", filename="DQAConnect-Setup-9.9.9.exe",
+    upd = updater.Update(version="9.9.9", filename="DQAConnect-Update-9.9.9.zip",
                          sha256="0" * 64, size=updater.MIN_SETUP_BYTES)
     said, br = _run_flow(monkeypatch, upd, {"ok": False, "error": "declined"})
     assert br.calls == 1
@@ -533,7 +532,7 @@ def test_tray_stays_quiet_when_the_user_declined(monkeypatch):
 
 
 def test_tray_stays_quiet_on_success_because_the_app_is_restarting(monkeypatch):
-    upd = updater.Update(version="9.9.9", filename="DQAConnect-Setup-9.9.9.exe",
+    upd = updater.Update(version="9.9.9", filename="DQAConnect-Update-9.9.9.zip",
                          sha256="0" * 64, size=updater.MIN_SETUP_BYTES)
     said, br = _run_flow(monkeypatch, upd, {"ok": True, "restarting": True})
     assert br.calls == 1
@@ -549,7 +548,7 @@ def _frozen_bridge(tmp_path, monkeypatch, confirm=lambda _m: True):
 
 
 def _pending(v: str = "9.9.9") -> updater.Update:
-    return updater.Update(version=v, filename=f"DQAConnect-Setup-{v}.exe",
+    return updater.Update(version=v, filename=f"DQAConnect-Update-{v}.zip",
                           sha256="0" * 64, size=updater.MIN_SETUP_BYTES)
 
 
@@ -707,9 +706,6 @@ def test_a_failed_check_shortens_the_retry_interval(tmp_path):
 
 def test_a_relaunch_owner_is_single(tmp_path):
     """재기동 입구가 둘이면 우리가 아직 살아 있는 사이 새 인스턴스가 잠금에 막힌다(C5)."""
-    assert "/RESTARTAPPLICATIONS" not in updater.SILENT_ARGS
-    assert "/NORESTARTAPPLICATIONS" in updater.SILENT_ARGS
-    assert "/RELAUNCH" not in updater.SILENT_ARGS
     code = _iss_code_only(_ISS.read_text(encoding="utf-8"))
     assert re.search(r"^RestartApplications=no$", code, re.M)
 
@@ -719,7 +715,6 @@ def test_installer_never_closes_live_apps_or_overwrites_their_payload():
     assert re.search(r"^CloseApplications=no$", code, re.M)
     assert re.search(r"^SetupMutex=Global\\DQAConnectSetup$", code, re.M)
     assert "CloseApplicationsFilter=" not in code
-    assert "/NOCLOSEAPPLICATIONS" in updater.SILENT_ARGS
     assert re.search(r"^SetupLogging=yes$", code, re.M)
 
 
@@ -786,7 +781,7 @@ def _armed_home(tmp_path, monkeypatch):
 def test_download_lands_the_exact_bytes_it_verified(tmp_path, monkeypatch):
     """성공 경로의 **행위** 커버리지 — 종전에는 소스 문자열 단언뿐이었다(C-5)."""
     home = _armed_home(tmp_path, monkeypatch)
-    payload = b"MZ" + b"G" * (updater.MIN_SETUP_BYTES - 2)
+    payload = b"PK" + b"G" * (updater.MIN_SETUP_BYTES - 2)
     upd = _update_of(payload)
     monkeypatch.setattr(updater, "_open", lambda *a, **k: _FakeResp(payload))
     got = updater.download(home, upd)
@@ -796,8 +791,8 @@ def test_download_lands_the_exact_bytes_it_verified(tmp_path, monkeypatch):
 
 def test_download_discards_a_mismatching_stream_and_leaves_no_part(tmp_path, monkeypatch):
     home = _armed_home(tmp_path, monkeypatch)
-    payload = b"MZ" + b"G" * (updater.MIN_SETUP_BYTES - 2)
-    upd = updater.Update(version="9.9.9", filename="DQAConnect-Setup-9.9.9.exe",
+    payload = b"PK" + b"G" * (updater.MIN_SETUP_BYTES - 2)
+    upd = updater.Update(version="9.9.9", filename="DQAConnect-Update-9.9.9.zip",
                          sha256="0" * 64, size=len(payload))
     monkeypatch.setattr(updater, "_open", lambda *a, **k: _FakeResp(payload))
     assert updater.download(home, upd) is None
@@ -808,7 +803,7 @@ def test_download_discards_a_mismatching_stream_and_leaves_no_part(tmp_path, mon
 def test_download_stops_reading_when_the_stream_exceeds_the_declared_size(tmp_path,
                                                                          monkeypatch):
     home = _armed_home(tmp_path, monkeypatch)
-    payload = b"MZ" + b"G" * (updater.MIN_SETUP_BYTES - 2)
+    payload = b"PK" + b"G" * (updater.MIN_SETUP_BYTES - 2)
     upd = _update_of(payload)
     # 선언보다 큰 스트림 — 읽기 자체가 끊겨야 한다.
     monkeypatch.setattr(updater, "_open",
@@ -830,8 +825,8 @@ def test_two_concurrent_flows_each_get_their_own_verified_bytes(tmp_path, monkey
     import threading as _th
 
     home = _armed_home(tmp_path, monkeypatch)
-    a = b"MZ" + b"A" * (updater.MIN_SETUP_BYTES - 2)
-    b = b"MZ" + b"C" * (updater.MIN_SETUP_BYTES - 2)
+    a = b"PK" + b"A" * (updater.MIN_SETUP_BYTES - 2)
+    b = b"PK" + b"C" * (updater.MIN_SETUP_BYTES - 2)
     upd_a, upd_b = _update_of(a), _update_of(b)
     # 두 흐름은 **같은 파일명**을 받는다(같은 버전, 다른 내용).
     assert upd_a.filename == upd_b.filename
@@ -861,13 +856,13 @@ def test_two_concurrent_flows_each_get_their_own_verified_bytes(tmp_path, monkey
 
 def test_verify_file_reads_the_file_that_will_be_executed(tmp_path):
     """§3-b — 판정면과 실행면을 일치시키는 자리."""
-    payload = b"MZ" + b"G" * (updater.MIN_SETUP_BYTES - 2)
+    payload = b"PK" + b"G" * (updater.MIN_SETUP_BYTES - 2)
     upd = _update_of(payload)
     good = tmp_path / "good.exe"
     good.write_bytes(payload)
     assert updater.verify_file(good, upd)
     # 검사 뒤 파일이 바뀌면 **거짓**이다 — 그것이 이 함수의 존재 이유다.
-    good.write_bytes(b"MZ" + b"X" * (updater.MIN_SETUP_BYTES - 2))
+    good.write_bytes(b"PK" + b"X" * (updater.MIN_SETUP_BYTES - 2))
     assert not updater.verify_file(good, upd)
 
 
@@ -886,7 +881,7 @@ def test_only_one_update_flow_runs_at_a_time(tmp_path, monkeypatch):
         return None
 
     monkeypatch.setattr(updater, "download", slow_download)
-    upd = _update_of(b"MZ" + b"G" * (updater.MIN_SETUP_BYTES - 2))
+    upd = _update_of(b"PK" + b"G" * (updater.MIN_SETUP_BYTES - 2))
     first: dict = {}
     _th.Thread(target=lambda: first.update(
         updater.run_flow(home, target=upd)), daemon=True).start()
@@ -933,3 +928,26 @@ def test_the_release_notes_carry_an_item_for_the_current_version():
     marker = f"({version.CLIENT_VERSION})"
     assert any(marker in ttl for ttl in titles), (
         f"릴리스노트에 {marker} 항목이 없다 — 사용자는 이 버전을 왜 받아야 하는지 알 수 없다")
+
+
+def test_download_does_not_follow_server_redirects(monkeypatch):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import ssl
+    import threading
+    reached=[]
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self,*args): pass
+        def do_GET(self):
+            reached.append(self.path)
+            self.send_response(302)
+            self.send_header('Location','/unexpected-target')
+            self.end_headers()
+    server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    thread=threading.Thread(target=server.serve_forever);thread.start()
+    monkeypatch.setattr(updater.ssl,'create_default_context',lambda **kw:ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT))
+    try:
+        with pytest.raises(OSError,match='redirects'):
+            updater._open(f'http://127.0.0.1:{server.server_port}/fixed','fixture',2)
+        assert reached==['/fixed']
+    finally:
+        server.shutdown();thread.join();server.server_close()

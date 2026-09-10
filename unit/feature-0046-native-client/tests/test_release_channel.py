@@ -49,7 +49,20 @@ def release():
 def publish():
     if str(_WEB_SRC) not in sys.path:
         sys.path.insert(0, str(_WEB_SRC))
-    return _load("publish_release_rc", _SRC / "scripts" / "publish_release.py")
+    module = _load("publish_release_rc", _SRC / "scripts" / "publish_release.py")
+    original = module.publish
+    def with_package(setup, directory, notes="", package=None):
+        if package is None and tuple(map(int, setup.stem.removeprefix("DQAConnect-Setup-").split("."))) >= (1, 4):
+            import zipfile
+            ver = setup.stem.removeprefix("DQAConnect-Setup-")
+            package = setup.parent / f"DQAConnect-Update-{ver}.zip"
+            with zipfile.ZipFile(package, "w") as archive:
+                archive.writestr("DQAConnect.exe", setup.read_bytes())
+                archive.writestr("runtime/python.exe", b"MZ-python")
+                archive.writestr("install-complete.txt", ver)
+        return original(setup, directory, notes, package)
+    module.publish = with_package
+    return module
 
 
 def _fake_setup(path: Path, version: str = "9.9.9", filler: bytes = b"\0") -> Path:
@@ -291,3 +304,68 @@ def test_rolling_back_applies_the_same_checks_as_publishing(publish, tmp_path):
     good.write_bytes(b"x" * mod.MIN_SETUP_BYTES)
     doc = mod.activate("1.0.0", rel)
     assert doc["version"] == "1.0.0" and doc["size"] == mod.MIN_SETUP_BYTES
+
+
+def test_new_channel_round_trip_selects_zip_and_revokes_both_artifacts(tmp_path, publish, release):
+    from client import updater
+    rel_dir = tmp_path/'release'
+    publish.publish(_fake_setup(tmp_path/'a', '1.4.0'), rel_dir)
+    got=release.current_release(rel_dir)
+    update=updater.parse_manifest(json.dumps(got).encode(), current='1.3.0')
+    assert update.filename=='DQAConnect-Update-1.4.0.zip'
+    assert updater.verify_file(rel_dir/update.filename, update)
+    release.RELEASE_DIR=rel_dir
+    assert release.client_download(update.filename).status_code==200
+    publish.publish(_fake_setup(tmp_path/'b','1.3.0'), rel_dir)
+    assert release.client_download(update.filename).status_code==404
+    assert release.client_download('DQAConnect-Setup-1.4.0.exe').status_code==404
+
+
+def test_publisher_cannot_publish_a_zip_the_client_will_reject(tmp_path, publish, release):
+    import zipfile
+    rel=tmp_path/'release'
+    publish.publish(_fake_setup(tmp_path/'old','1.3.0'),rel)
+    source=_fake_setup(tmp_path/'new','1.4.0')
+    package=source.parent/'DQAConnect-Update-1.4.0.zip'
+    with zipfile.ZipFile(package,'w') as archive:
+        archive.writestr('DQAConnect.exe',source.read_bytes())
+        archive.writestr('runtime/python.exe',b'MZ-python')
+        archive.writestr('install-complete.txt','1.4.0')
+        archive.writestr('../escape',b'bad')
+    with pytest.raises(ValueError): publish.publish(source,rel,package=package)
+    assert release.current_release(rel)['version']=='1.3.0'
+
+
+def test_new_release_requires_update_package_before_changing_channel(tmp_path, publish, release):
+    raw=_load('publish_raw',_SRC/'scripts/publish_release.py')
+    rel=tmp_path/'release'
+    publish.publish(_fake_setup(tmp_path/'old','1.3.0'),rel)
+    with pytest.raises(SystemExit): raw.publish(_fake_setup(tmp_path/'new','1.4.0'),rel)
+    assert release.current_release(rel)['version']=='1.3.0'
+
+
+def test_concurrent_different_builds_of_one_version_cannot_mix_the_channel(tmp_path,publish,release):
+    import concurrent.futures
+    import threading
+    sources=[_fake_setup(tmp_path/'a','1.4.0',b'a'),_fake_setup(tmp_path/'b','1.4.0',b'b')]
+    barrier=threading.Barrier(2)
+    def run(source):
+        barrier.wait(timeout=5)
+        try: return publish.publish(source,tmp_path/'release')
+        except (SystemExit,OSError): return None
+    with concurrent.futures.ThreadPoolExecutor(2) as pool: results=list(pool.map(run,sources))
+    assert sum(result is not None for result in results)==1
+    got=release.current_release(tmp_path/'release')
+    assert got and got['update']['sha256']
+    assert got['sha256']==next(result['sha256'] for result in results if result)
+
+
+def test_prune_removes_old_package_with_setup_but_keeps_active_pair(tmp_path,publish,release):
+    rel=tmp_path/'release'
+    for ver in ('1.4.0','1.4.1','1.4.2'):
+        publish.publish(_fake_setup(tmp_path/ver,ver),rel)
+    publish.activate('1.4.0',rel)
+    removed=publish.prune(rel,1)
+    assert set(removed)=={'DQAConnect-Setup-1.4.1.exe','DQAConnect-Update-1.4.1.zip'}
+    assert (rel/'DQAConnect-Update-1.4.0.zip').is_file()
+    assert release.current_release(rel)['version']=='1.4.0'

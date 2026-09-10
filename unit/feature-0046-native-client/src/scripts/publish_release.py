@@ -34,6 +34,7 @@ CI 가 생기면 이 스크립트를 그대로 호출하면 된다 — 반입 �
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -123,9 +124,11 @@ def _write_manifest(release_dir: Path, doc: dict) -> Path:
     return target
 
 
-def _place(setup: Path, release_dir: Path) -> Path:
+def _place(setup: Path, release_dir: Path, digest: str, size: int) -> Path:
     """설치기를 릴리스 디렉토리에 **먼저** 놓는다(매니페스트보다 앞이다)."""
     target = release_dir / setup.name
+    if target.is_file() and target.stat().st_size == size and _sha256(target) == digest:
+        return target
     fd, tmp = tempfile.mkstemp(prefix=".setup.", suffix=".part", dir=str(release_dir))
     try:
         with os.fdopen(fd, "wb") as dst, setup.open("rb") as src:
@@ -134,6 +137,8 @@ def _place(setup: Path, release_dir: Path) -> Path:
             # ⚠ **쓰기 fd 에 fsync 한다.** 읽기 fd 로는 방금 쓴 바이트가 디스크에 닿았음을
             #   보장하지 못한다 — `os.replace` 는 이름만 원자적이고 내용까지 보장하지 않는다.
             os.fsync(dst.fileno())
+        if Path(tmp).stat().st_size != size or _sha256(Path(tmp)) != digest:
+            raise ValueError("게시 중 원본 파일이 변경됐습니다.")
         os.chmod(tmp, 0o644)
         os.replace(tmp, target)
     except Exception:
@@ -142,7 +147,56 @@ def _place(setup: Path, release_dir: Path) -> Path:
     return target
 
 
-def publish(setup: Path, release_dir: Path, notes: str = "") -> dict:
+def package_metadata(package: Path, version: str) -> dict:
+    if package.name != f"DQAConnect-Update-{version}.zip":
+        raise SystemExit("업데이트 패키지 이름과 버전이 다릅니다.")
+    size = package.stat().st_size
+    if not MIN_SETUP_BYTES <= size <= 400 * 1024 * 1024:
+        raise SystemExit("업데이트 패키지 크기가 올바르지 않습니다.")
+    client_src = str(Path(__file__).resolve().parents[1])
+    if client_src not in sys.path:
+        sys.path.insert(0, client_src)
+    from client.update_package import extract_payload
+    digest = _sha256(package)
+    with tempfile.TemporaryDirectory(prefix="dqa-package-check-") as temp:
+        extract_payload(package, Path(temp), version)
+    if package.stat().st_size != size or _sha256(package) != digest:
+        raise ValueError("검증 중 업데이트 원본이 변경됐습니다.")
+    return {"filename": package.name, "size": size, "sha256": digest}
+
+
+@contextmanager
+def release_lock(release_dir: Path):
+    release_dir.mkdir(parents=True, exist_ok=True)
+    with (release_dir / ".publish.lock").open("a+b") as lock:
+        if os.name == "nt":
+            import msvcrt
+            if lock.tell() == 0:
+                lock.write(b"0")
+                lock.flush()
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def publish(setup: Path, release_dir: Path, notes: str = "",
+            package: Path | None = None) -> dict:
+    with release_lock(release_dir):
+        return _publish_locked(setup, release_dir, notes, package)
+
+
+def _publish_locked(setup: Path, release_dir: Path, notes: str = "",
+            package: Path | None = None) -> dict:
     """설치기 1개를 배포 중인 것으로 만든다. 돌려주는 값이 곧 매니페스트다."""
     m = SETUP_NAME_RE.match(setup.name)
     if not m:
@@ -158,14 +212,19 @@ def publish(setup: Path, release_dir: Path, notes: str = "") -> dict:
     version = m.group("ver")
     digest = _sha256(setup)
 
-    # ⚠ 같은 버전으로 **내용이 다른** 파일을 올리는 것은 사실상 되돌릴 수 없는 실수다 —
-    #   이미 받은 머신은 「더 새것일 때만」 받으므로 영원히 낡은 채로 남는다.
     existing = release_dir / setup.name
     if existing.is_file() and _sha256(existing) != digest:
-        print(f"⚠ 같은 버전({version})으로 **다른 내용**을 덮어씁니다. 이미 이 버전을 받은 "
-              "머신은 새 내용을 받지 못합니다 — 버전을 올리는 것이 옳습니다.", file=sys.stderr)
+        raise SystemExit("같은 버전의 다른 설치기를 게시할 수 없습니다. 버전을 올리세요.")
+    update = None
+    if package is not None:
+        update = package_metadata(package, version)
+        existing_package = release_dir / package.name
+        if existing_package.is_file() and _sha256(existing_package) != update["sha256"]:
+            raise SystemExit("같은 버전의 다른 패키지를 게시할 수 없습니다. 버전을 올리세요.")
+    elif tuple(map(int, version.split("."))) >= (1, 4):
+        raise SystemExit("1.4.0 이상은 --package 업데이트 ZIP이 필요합니다.")
 
-    placed = _place(setup, release_dir)
+    placed = _place(setup, release_dir, digest, size)
     doc = {
         "version": version,
         "filename": placed.name,
@@ -174,6 +233,9 @@ def publish(setup: Path, release_dir: Path, notes: str = "") -> dict:
         "published_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "notes": str(notes or "").strip()[:400],
     }
+    if update is not None:
+        _place(package, release_dir, update["sha256"], update["size"])
+        doc["update"] = update
     _write_manifest(release_dir, doc)
     return doc
 
@@ -200,16 +262,8 @@ def activate(version: str, release_dir: Path, notes: str = "") -> dict:
     size = target.stat().st_size
     if size < MIN_SETUP_BYTES:
         raise SystemExit(f"그 설치기가 너무 작습니다({size:,} bytes) — 반쪽 파일로 되돌리지 않습니다.")
-    doc = {
-        "version": version,
-        "filename": name,
-        "sha256": _sha256(target),
-        "size": size,
-        "published_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-        "notes": str(notes or "").strip()[:400],
-    }
-    _write_manifest(release_dir, doc)
-    return doc
+    package = release_dir / f"DQAConnect-Update-{version}.zip"
+    return publish(target, release_dir, notes, package if package.is_file() else None)
 
 
 def check(release_dir: Path) -> int:
@@ -232,22 +286,30 @@ def check(release_dir: Path) -> int:
 
 
 def prune(release_dir: Path, keep: int) -> list[str]:
-    """옛 설치기를 정리한다. **배포 중인 것은 무조건 남긴다.**"""
-    active = (_server_view().current_release(release_dir) or {}).get("filename", "")
-    files = sorted((p for p in release_dir.glob("DQAConnect-Setup-*.exe")),
-                   key=lambda p: p.stat().st_mtime, reverse=True)
-    removed: list[str] = []
-    for p in files[max(1, keep):]:
-        if p.name == active:
-            continue
-        p.unlink(missing_ok=True)
-        removed.append(p.name)
-    return removed
+    """Prune old setup/package pairs under the publication lock."""
+    with release_lock(release_dir):
+        rel = _server_view().current_release(release_dir)
+        if not rel:
+            raise SystemExit("유효한 현재 채널이 없으므로 릴리스를 정리하지 않습니다.")
+        active = rel["version"]
+        files = sorted(release_dir.glob("DQAConnect-Setup-*.exe"),
+                       key=lambda p: p.stat().st_mtime, reverse=True)
+        removed = []
+        for path in files[max(1, keep):]:
+            match = SETUP_NAME_RE.fullmatch(path.name)
+            if not match or match["ver"] == active:
+                continue
+            for artifact in (path, release_dir / f"DQAConnect-Update-{match['ver']}.zip"):
+                if artifact.is_file():
+                    artifact.unlink()
+                    removed.append(artifact.name)
+        return removed
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--setup", help="올릴 설치기 경로 (DQAConnect-Setup-<버전>.exe)")
+    ap.add_argument("--package", help="동일 빌드의 DQAConnect-Update-<버전>.zip")
     ap.add_argument("--dir", default=None,
                     help="릴리스 디렉토리 (연결된 worktree 에서는 **필수**)")
     ap.add_argument("--notes", default="", help="사용자에게 보일 한 줄 설명(≤400자)")
@@ -267,7 +329,8 @@ def main(argv: list[str] | None = None) -> int:
         return check(release_dir)
 
     if args.setup:
-        doc = publish(Path(args.setup).resolve(), release_dir, args.notes)
+        doc = publish(Path(args.setup).resolve(), release_dir, args.notes,
+                      Path(args.package).resolve() if args.package else None)
         print(f"배포 중: {doc['version']} ({doc['filename']}, {doc['size']:,} bytes)")
         print(f"sha256 : {doc['sha256']}")
     elif args.activate:
