@@ -126,7 +126,17 @@ source_of_truth: true
 - [x] **하네스 자기-검증 결함 시정**: 리뷰가 «신규 테스트의 `openFloatingMenu` stub 이 정본의 상태 기입을
       재현하지 않아 위 ①에 눈이 멀어 있다»를 지적 — stub 폐기 후 정본 3함수를 realm 에 주입하도록 재작성.
       **58 → 77 PASS / 0 FAIL**, 판별력 뮤턴트 누적 **12종 전부 KILL**, 전수 신규 회귀 0.
-- [ ] verify-completion · 배포 · POST-DEPLOY DQA 클라이언트(PB-0009) 시각검증.
+- [x] verify-completion PASS → PR #1682 머지(main `413151c5`) → `deploy-web.sh --web-only` 배포
+      (asset_stamp=e468c1bf1e49 두 replica 일치 · soak PASS · 서빙 자산에 새 트리거 클래스 도달 확인).
+- [x] POST-DEPLOY 라이브 실측 — `tests/pb0008_folder_newconv.py` **21건 PASS / 0 FAIL**
+      (F1 트리거·접근성 · F2 클릭→그 폴더 안 '작성 중'(들여쓰기 22px)·메뉴 미개방·폴더 안 접힘 ·
+      F3 우클릭→관리 메뉴 4항목 · F4 배정 왕복 200 + 서버 `folder_id` 일치 · F4b 재적재 후 폴더 하위 렌더 ·
+      F5 시각 캡처 판독 · pageerror 0). **역검증**(`--negative`) 시 F1 핵심 3건 FAIL — 판별력 실증.
+      테스트 폴더·대화 전량 정리(잔여 0).
+- [x] DQA 클라이언트 관측(`PrintWindow`, 조작 없음) — 배포 후 정상 대화 화면·폴더 트리 렌더, 회귀 0.
+      **미검증 분리 표기**: ①'📝' 는 hover 에서만 드러나므로 사용자 앱을 조작하지 않는 한 캡처로 확인 불가
+      ②이 앱이 새 자산으로 재적재됐는지 미확인 ③「전송 → 자동 배정」 프론트 배선은 서버 LLM 폐기로
+      일반 브라우저 `#promptInput` 이 비활성이라 라이브 미측정(jsdom case7 + 3경로 소스 잠금이 덮는다).
 
 ## 9. Requested Scope (요청 범위 자기-열거)
 

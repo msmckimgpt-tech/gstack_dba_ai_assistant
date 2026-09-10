@@ -78,3 +78,66 @@ Next: 배포 후 ① 라이브 Windows Chrome(같은 Chromium 엔진, 로그인 
   `tests/pb0008_folder_newconv.py` 실측 ② 실행 중인 DQA 앱 창을 `PrintWindow` 로 수동 관측
   (조작·종료 없음) — 두 결과를 이 파일에 append 한다.
 ```
+
+## Run 3 — 라이브 실측, 실 Windows Chrome (보조 호환 검증, 배포 후 append)
+
+```text
+Environment: Windows-browser (라이브 서비스)
+Result: PASS
+Build: 서버 release=413151c5 (`/healthz` git_commit) · asset_stamp=e468c1bf1e49 (두 replica 일치) ·
+  `bin/deploy-web.sh --web-only` soak PASS · Chrome/152.0.7977.83 · 전용 프로파일 `win-browser-cdp`
+  (세션 bootstrap_admin/admin, 자기 생성 표면 한정)
+Scenario / Evidence — `tests/pb0008_folder_newconv.py`, 총 21건 PASS 21 / FAIL 0:
+  F1  폴더 행에 `.conv-folder-newconv-trigger` 존재 · textContent="📝" · aria-label="새 대화 시작"
+      · role=button · tabindex=0 · 구 `.conv-folder-menu-trigger` **부재** · 행 높이 27px ·
+      폴더명 말줄임 없음(nameEllipsized=0)
+  F2  '📝' 클릭 → 옵션 메뉴 **안 열림** · '새 대화 (작성 중)' 행이 **그 폴더 안**(A=1 draft=2 nextHdr=3)
+      · 들여쓰기 paddingLeft=22px · 클릭으로 폴더가 접히지 않음
+  F3  폴더 헤더 **우클릭** → `#folderMenu` 열림(folderId 일치), 항목
+      `["이름 변경","이 폴더에서 새 대화","하위 폴더 추가","설정"]` — 관리 기능 보존 확인
+  F4  `POST /api/new_conversation` → `PATCH /api/conversations/{cid}/folder` 200 →
+      `GET /api/conversations` 의 `folder_id` 가 그 폴더(125). cid=20260910085954-8cbbf464
+  F4b 재적재 후 사이드바가 그 대화를 **폴더 A 하위**에 렌더(A=1 conv=2 next=3)
+  F5  시각 캡처 `artifacts/feature-0024-folder-newconv/folder-newconv-row.png` —
+      폴더 행 우측의 '📝' 가 폴더 아이콘·개수 배지와 같은 baseline 에 정렬, 행 높이 흔들림 없음.
+      **판독 결과**: 🗂 와 📝 가 이 환경에서 **둘 다 흑백(텍스트 프레젠테이션)** 으로 해결돼,
+      적대 리뷰가 우려한 «흑백 폴더 + 컬러 메모» 혼재는 관측되지 않았다.
+  전역 pageerror 0
+역검증(`--negative`, 구 '···' 계약으로 재기): F1 핵심 3건 FAIL(트리거 존재·표시=📝·구 트리거 부재)
+  — 하네스가 실제로 이 변경을 재고 있다.
+테스트 데이터: 본 스크립트가 만든 폴더·대화 전량 삭제(잔여 0 — 정리 로그가 각 id 의 200 을 남긴다).
+
+미검증(정직 표기):
+  - **「첫 메시지 전송 → 자동 폴더 배정」 의 프론트 배선은 라이브에서 못 쟀다.** 서버 LLM 폐기
+    이후 질의는 DQA 앱의 로컬 브리지로만 가므로, 일반 브라우저에서는 `#promptInput` 이 비활성이다
+    (실측: `element is not enabled`). 그래서 F4 는 프론트가 cid 확정 직후 호출하는 **바로 그 배정
+    왕복**을 라이브 서버에 대고 쟀고, 「전송이 그 왕복을 부른다」는 배선은 jsdom(case7 + 대화 생성
+    3경로 호출 소스 잠금)이 덮는다. 두 사실을 각각 얻었을 뿐 합산 관측은 아니다.
+  - 일반 브라우저는 §15.4.1 상 **공유 HTML/CSS/JS 의 보조 검증**이다 — DQA 앱의 창·로그인 저장소·
+    로컬 브리지·트레이를 대체하지 않는다.
+  - 진입 게이트(client-entry-gate) 때문에 `?client_port=&client_nonce=` 신호를 실어 진입했고,
+    연결 모달은 사이드바 클릭을 가로채므로 Escape 로 닫은 뒤 관측했다(제품 상태 변경 없음).
+```
+
+## Run 4 — 실행 중인 사용자 DQA 앱 (수동 관측, 조작 없음)
+
+```text
+Environment: DQA-client
+Result: PASS (관측 범위 한정 — 아래 «확인하지 않은 것» 참조)
+Build: 서버 413151c5 배포 직후 · `DQAConnect.exe` PID 34472 (사용자 실행 세션, 미종료)
+Scenario: 배포로 새 자산이 나간 뒤 실행 중인 앱이 정상 대화 화면을 유지하는가
+Evidence: `PrintWindow` 창 캡처 1936×1176 —
+  `artifacts/feature-0024-folder-newconv/dqa-app-after-deploy.png`
+  사이드바에 폴더 트리(`_휴지통`·`정리`·`쿼리 리뷰`·`g_mv`·`g_web`·`gz`·`k_dk`·`kr_web`·`DB 작업` …
+  중첩 포함)와 대화 목록·본문·작성창이 모두 정상 렌더. 오류 화면·설치 안내로의 이탈 없음.
+방법: **수동 관측만** — 앱을 종료·조작·재설치하지 않았고 입력도 넣지 않았다
+  (§16.6 「기존 사용자 앱·연결을 검증 편의로 종료하지 않는다」).
+
+확인하지 않은 것 (정직 표기):
+  - **폴더 행의 '📝' 트리거는 이 캡처로 확인되지 않는다.** 설계상 평소 `opacity:0` 이고 hover·포커스
+    에서만 드러나는데, 그 hover 를 만들려면 사용자 앱에 입력을 넣어야 하므로 하지 않았다.
+    같은 자산의 같은 화면은 Run 3 이 실 Chromium 에서 21건으로 실측했다.
+  - **이 앱이 이미 새 빌드로 재적재됐는지도 미확인.** 자동 반영은 «안전한 시점»에 적용되므로 아직 옛
+    자산일 수 있다. 즉 「앱이 지금 정상」 과 「새 자산이 이 앱에 도달」 은 각각의 사실이며 합산이 아니다.
+  - WebView2 고유 축(창 생명주기·로컬 브리지·트레이)은 이번 변경 범위가 아니라 미확인.
+```
