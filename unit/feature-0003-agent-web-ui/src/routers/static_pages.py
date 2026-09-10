@@ -54,6 +54,18 @@ def ai_connect_page() -> FileResponse:
     return app.FileResponse(app.STATIC_DIR / "ai-connect.html", headers=app._HTML_NO_CACHE)
 
 
+# feature-0003 client-entry-gate (사용자 결정 2026-09-10): 평범한 웹브라우저로 앱 루트(`/`)나
+# 관리 콘솔(`/admin`)에 들어온 사람이 **도착하는 자리**. 익명 접근 가능 — 이 화면을 보러 온
+# 사람은 아직 로그인할 창(DQA 앱)이 없다. 화면 데이터는 클라이언트 JS 가
+# `/api/ai/client/entry` 로 받는다(share.html·ai-connect.html 과 같은 형태).
+#
+# ⚠ **이 경로는 게이트 대상이 아니다** — `static/client-gate.js` 를 싣지 않는다. 실으면
+#   설치 안내가 자기 자신으로 무한히 되보낸다.
+@router.get("/install")
+def install_page() -> FileResponse:
+    return app.FileResponse(app.STATIC_DIR / "install.html", headers=app._HTML_NO_CACHE)
+
+
 # feature-0041: 인가 완료 화면. 자체 콜백 서버가 없는 클라이언트(스크립트·수동 연동)가
 # `redirect_uri` 로 등록할 수 있는 자리다 — 등록하지 않으면 사용자는 브라우저 연결 오류나
 # 손으로 만든 평문 페이지를 보게 된다. 서버는 여기서 아무것도 하지 않는다(코드는 URL 에만

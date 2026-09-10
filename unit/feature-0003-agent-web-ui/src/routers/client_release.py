@@ -1,6 +1,7 @@
 """client-release 도메인 APIRouter (네이티브 클라이언트 배포본의 **매니페스트 단일 표면**).
 
-URL: `/api/ai/client/latest` (익명 · 인스턴스 데이터 0). RBAC 스코프: 없음 — 설치기는 비밀이
+URL: `/api/ai/client/latest`(업데이터 계약) · `/api/ai/client/entry`(설치 안내 화면 한 벌) ·
+`/client/{filename}`(실물) — 모두 익명 · 인스턴스 데이터 0. RBAC 스코프: 없음 — 설치기는 비밀이
 아니고 연결 화면의 「연결 프로그램 받기」와 같은 등급이다(`/static/agent/bridge_setup.sh` 선례).
 INCLUDE_ORDER=260 — admin_perf(250) 다음 슬롯(순서 변경 금지).
 
@@ -37,12 +38,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import threading
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 INCLUDE_ORDER = 260  # admin_perf(250) 뒤 — 신규 배포 표면 대역 (순서 변경 금지)
@@ -209,6 +211,66 @@ def client_latest() -> JSONResponse:
     if not rel:
         return JSONResponse({"error": "no_release"}, status_code=404)
     return JSONResponse(rel, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/api/ai/client/entry")
+def client_entry(request: Request) -> JSONResponse:
+    """설치 안내 화면(`/install`)이 필요로 하는 값 전부. **한 번에** 준다.
+
+    ## 왜 `/api/ai/client/latest` 를 그대로 쓰지 않는가
+
+    저 응답은 **클라이언트 업데이터의 계약**이다(`updater.py` 가 필드를 검사한다). 사람이
+    보는 화면이 필요로 하는 것 — 절대 다운로드 URL, 「이미 설치했다」 딥링크 — 를 거기에
+    얹으면 업데이터가 모르는 필드를 받게 되고, 화면 사정으로 그 계약을 흔들게 된다.
+    표면을 가르고 **판정은 한 곳**(`current_release`)에서 가져온다.
+
+    ## 왜 딥링크를 서버가 조립하는가
+
+    스킴·경로·검증 규칙의 정본은 `shared/dqa_identity` 다. 프런트가 문자열을 직접 만들면
+    개명·규칙 변경이 도달하지 않는 자리가 하나 더 생긴다 — 그 리터럴이 21곳에 흩어져 있던
+    것이 `dqa_identity.py` 가 생긴 이유다. `routers/share.py._share_client_entry` 가 같은
+    이유로 같은 함수를 부른다.
+
+    ⚠ 딥링크에 **자격증명이 없다**(`app_open_url` 은 토큰을 싣지 않는다). 앱 창은 기본
+    브라우저 프로필로 열려 로그인 세션이 따라오므로 토큰을 한 번 더 실을 이유가 없고,
+    이 화면은 미로그인 방문자에게도 뜬다.
+
+    ## 없는 것을 광고하지 않는다
+
+    배포 중인 설치기가 없으면 `release: null` 이다. 화면은 그때 받기 버튼을 그리지 않는다 —
+    안내받은 대로 갔다가 막히는 것이 이 저장소가 세 지점에서 닫은 결함 클래스(P0-I)다.
+    여기서 `null` 을 쓰는 것은 `/api/ai/client/latest` 의 404 와 모순이 아니다: 저쪽은
+    「받을 것이 있는가」만 묻는 업데이터용이고, 이쪽은 **화면 한 벌**이라 릴리스가 없어도
+    나머지(딥링크·안내)를 그려야 한다.
+    """
+    origin = str(request.base_url).rstrip("/")
+
+    app_link = None
+    try:
+        from shared import dqa_identity as _ident
+
+        app_link = _ident.app_open_url(origin, "/")
+    except Exception:  # noqa: BLE001 — 딥링크 조립 실패가 설치 안내를 막지 않는다
+        logging.getLogger(__name__).warning(
+            "client_entry: app_link build failed", exc_info=True)
+
+    rel = current_release()
+    release = None
+    if rel:
+        # ⚠ 화면이 쓰는 모양으로 **다시 조립한다.** 매니페스트 필드를 그대로 흘려 보내지
+        #   않는 `current_release` 의 규율을 여기서도 지킨다.
+        release = {
+            "version": rel["version"],
+            "filename": rel["filename"],
+            "size": rel["size"],
+            "sha256": rel["sha256"],
+            "published_at": rel["published_at"],
+            "notes": rel["notes"],
+            "download_url": f"{origin}{rel['path']}",
+        }
+
+    return JSONResponse({"app_link": app_link, "release": release},
+                        headers={"Cache-Control": "no-store"})
 
 
 # ⚠ **경로를 리터럴로 적는다.** `bin/gen-routemap.py` 는 데코레이터 인자의

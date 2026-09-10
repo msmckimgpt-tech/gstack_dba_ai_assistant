@@ -1,6 +1,6 @@
 {
-  "total_routes": 273,
-  "api_routes": 272,
+  "total_routes": 275,
+  "api_routes": 274,
   "ordered": [
     {
       "path": "/static",
@@ -30,6 +30,13 @@
     },
     {
       "path": "/ai/connect",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/install",
       "methods": [
         "GET"
       ],
@@ -1640,6 +1647,13 @@
     },
     {
       "path": "/api/ai/client/latest",
+      "methods": [
+        "GET"
+      ],
+      "type": "APIRoute"
+    },
+    {
+      "path": "/api/ai/client/entry",
       "methods": [
         "GET"
       ],

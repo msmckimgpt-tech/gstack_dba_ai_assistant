@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <link rel="icon" href="/static/brand/dqa.ico?v=dev" />
+  <link rel="icon" type="image/svg+xml" sizes="any" href="/static/brand/dqa.svg?v=dev" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>DQA 앱 설치</title>
+  <!-- ⚠ **서비스 디자인 시스템을 먼저 싣는다.** 이 화면은 SPA 밖에 단독으로 뜨지만, 값을
+       여기서 «정하지» 않는다 — 색·서체·모서리 반경의 정본은 css/base.css 하나다.
+       ai-connect.html 이 자기만의 토큰을 갖는 «디자인 섬» 이었다가 서비스와 미세하게
+       어긋나 있던 것(2026-09-04 발견)을 되풀이하지 않는다. 서체도 같은 이유로 앱과 같은
+       Geist 를 싣는다 — 시스템 기본값으로 두면 이 화면만 다른 제품처럼 보인다. -->
+  <link rel="preconnect" href="https://fonts.bunny.net" />
+  <link href="https://fonts.bunny.net/css?family=geist:400,500,600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/base.css?v=dev" />
+  <link rel="stylesheet" href="/static/install.css?v=dev" />
+</head>
+<body class="ins-body">
+
+  <main class="ins-page">
+
+    <header class="ins-head">
+      <img class="ins-mark" src="/static/brand/dqa.svg?v=dev" alt="" width="36" height="36" />
+      <p class="ins-eyebrow">Database Query Assistant</p>
+      <h1 class="ins-title">DQA는 전용 앱에서 사용합니다</h1>
+      <!-- §16.8 B-1: 이 화면이 무엇인지 1문장. 왜 앱인지·무엇이 좋은지는 적지 않는다 —
+           사용자는 구조 설명이 아니라 다음에 할 일을 찾으러 왔다. -->
+      <p class="ins-lead">앱을 설치하면 로그인부터 대화까지 그 창에서 끝납니다.</p>
+    </header>
+
+    <!-- ─── 행동 블록: 아래 넷 중 **하나만** 보인다 ───────────────────────────
+         한 화면에 다음 할 일 하나 (feature-0046 gui.py 가 지키는 원칙과 같다). -->
+
+    <section class="ins-act ins-act--quiet" id="actLoading" role="status" aria-live="polite">
+      <p>설치 파일을 확인하는 중입니다.</p>
+    </section>
+
+    <section class="ins-act" id="actDownload" hidden>
+      <a class="ins-cta" id="downloadBtn" href="#" download>DQA 앱 받기</a>
+      <!-- 실제 버전·용량·게시일이 들어간다. 서버가 실물을 대조해 통과시킨 값만 온다. -->
+      <p class="ins-meta" id="downloadMeta"></p>
+    </section>
+
+    <section class="ins-act ins-act--quiet" id="actOtherOs" hidden>
+      <p class="ins-act-title">이 기기에서는 아직 설치할 수 없습니다</p>
+      <p>DQA 앱은 현재 <b>Windows 10 · 11</b>에서만 동작합니다. Windows PC에서 이 주소를 다시 열어 주세요.</p>
+      <p class="ins-muted">공유받은 대화 링크는 이 기기의 브라우저에서도 그대로 열립니다.</p>
+    </section>
+
+    <!-- ⚠ 없는 것을 광고하지 않는다 (feature-0046 §P0-I). 서버가 실물·크기·지문 대조에
+         실패하면 받기 버튼 자체를 그리지 않는다 — 안내받은 대로 갔다가 막히는 것이
+         이 저장소가 세 지점에서 닫은 결함 클래스다. -->
+    <section class="ins-act ins-act--quiet" id="actNoRelease" hidden>
+      <p class="ins-act-title">지금은 내려받을 설치 파일이 없습니다</p>
+      <p>서버에 게시된 설치 파일이 없습니다. 관리자에게 문의해 주세요.</p>
+    </section>
+
+    <!-- ⚠ **«못 물어봤다» 와 «없다» 는 다른 상태다** (codex 적대 리뷰 2026-09-10 P2-5).
+         한 문장으로 합치면 통신 장애를 «서버에 파일이 없음» 으로 확정 표시하게 되고,
+         사용자는 있지도 않은 관리자 문의로 보내진다. 여기서는 다시 시도할 수 있게 한다. -->
+    <section class="ins-act ins-act--quiet" id="actUnavailable" hidden>
+      <p class="ins-act-title">설치 파일 정보를 불러오지 못했습니다</p>
+      <p>네트워크나 서버 상태를 확인한 뒤 다시 시도해 주세요.</p>
+      <p><button type="button" class="ins-retry" id="retryBtn">다시 시도</button></p>
+    </section>
+
+    <!-- ⚠ **설치기 배포 여부와 «이미 설치한 앱을 여는 것» 은 별개 축이다**
+         (codex 적대 리뷰 2026-09-10 P2-4). 배포본을 철회해도 이미 설치한 사람은 앱을 열 수
+         있어야 한다 — 그래서 이 줄은 받기 블록 안이 아니라 **밖**에 있다. -->
+    <p class="ins-alt" id="alreadyInstalled" hidden>
+      이미 설치했다면 <a class="ins-link" id="openAppLink" href="#">설치한 DQA에서 열기</a>.
+      아무 일도 일어나지 않으면 시작 메뉴에서 <b>DQA</b>를 실행하세요.
+    </p>
+
+    <!-- ─── 설치하면 무엇이 보이는가 ──────────────────────────────────────── -->
+    <ol class="ins-steps" id="steps" hidden>
+      <li>
+        <h2>받은 파일을 실행합니다</h2>
+        <!-- §16.8 B-2: 넣는 것은 «비가역·비용·권한이 걸린 행동의 경고». 미서명 설치기라
+             SmartScreen 이 **반드시** 뜨는데, 그 창을 예고하지 않으면 사용자는 그것을
+             사고로 읽고 멈춘다 (feature-0046 §4 Out of Scope — 미서명 진행 결정). -->
+        <p>Windows가 <b>“Windows의 PC 보호”</b> 창을 띄우면 <b>추가 정보</b> → <b>실행</b>을 누르세요.
+           아직 코드 서명을 넣지 않아 처음 한 번 나타납니다.</p>
+      </li>
+      <li>
+        <h2>DQA 창에서 로그인합니다</h2>
+        <p>지금 쓰던 계정 그대로입니다. 설치한 뒤에는 이 브라우저로 돌아올 일이 없습니다.</p>
+      </li>
+      <li>
+        <h2>다음부터는 시작 메뉴에서 엽니다</h2>
+        <p>바탕화면과 시작 메뉴에 <b>DQA</b> 아이콘이 생깁니다.</p>
+      </li>
+    </ol>
+
+    <!-- 이번 버전이 무엇을 바꾸는지 — 서버 매니페스트의 실제 문구. 비어 있으면 안 뜬다. -->
+    <p class="ins-release-note" id="releaseNotes" hidden></p>
+
+    <!-- ⚠ 미서명 설치기를 실행하라고 안내하는 화면은 그 자체가 피싱으로 모사되기 쉽다
+         (docs/SECURITY.md §7 의 share 행 주의). 그래서 **대조할 수 있는 값**을 같이 준다.
+         평소에는 접혀 있어 읽을 필요가 없고, 확인하려는 사람에게는 명령까지 있다. -->
+    <details class="ins-verify" id="verify" hidden>
+      <summary>받은 파일이 맞는지 확인하기</summary>
+      <div class="ins-verify-body">
+        <dl class="ins-facts">
+          <div class="ins-fact"><dt>파일</dt><dd id="factName"></dd></div>
+          <div class="ins-fact"><dt>크기</dt><dd id="factSize"></dd></div>
+          <div class="ins-fact">
+            <dt>SHA-256</dt>
+            <dd>
+              <code class="ins-hash" id="factHash"></code>
+              <button type="button" class="ins-copy" id="copyHashBtn">복사</button>
+            </dd>
+          </div>
+        </dl>
+        <p class="ins-muted">PowerShell에서 받은 파일의 지문을 계산해 위 값과 비교합니다.</p>
+        <pre class="ins-cmd"><code id="verifyCmd"></code></pre>
+      </div>
+    </details>
+
+  </main>
+
+  <script src="/static/install.js?v=dev"></script>
+</body>
+</html>

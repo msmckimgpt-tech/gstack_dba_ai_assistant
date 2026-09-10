@@ -119,7 +119,7 @@ sources:
 | feature-0043-external-llm-bridge | in-progress | 2026-09-09 | [TASK](../unit/feature-0043-external-llm-bridge/docs/TASK.md) | 대화별 AI 세션 재사용과 그룹 assistant 문맥 유지 구현·검증, 출하 진행 |
 | feature-0044-qa-staging-pipeline | planned | 2026-08-27 | [TASK](../unit/feature-0044-qa-staging-pipeline/docs/TASK.md) | QA·라이브 분리 CI/CD 설계 rev.3 확정 (전제 13축 중 12축 결정 — SVN 안 A(매니페스트만)+파일서버 tar · docker save 릴레이 · 빌드 서버 이관 경로 · 로컬 LLM 전면 폐지로 GPU 불요, 단 임베딩 사내 MCP 이관이 QA 세팅 선행 조건). 구현 착수는 사용자 승인 대기 |
 | feature-0045-zd-bridge-continuity | review | 2026-08-27 | [TASK](../unit/feature-0045-zd-bridge-continuity/docs/TASK.md) | 웹브라우저–개인 AI 브리지가 연결된 상태에서 배포가 진행돼도 그 작업이 끊기지 않게 무중단 스파인을 재구성. 배경: feature-0043 전환으로 추론 주체가 개인 머신 AI 로 넘어가면서 사용자 작업이 WebAiTasks + 브리지 왕복 위에서 일어나게 됐는데, 배포 게이트는 여전히 active… (상세는 TASK) |
-| feature-0046-native-client | in-progress | 2026-09-10 | [TASK](../unit/feature-0046-native-client/docs/TASK.md) | 1.4.0 앱 내부 ZIP 갱신 공개 완료; Windows 작업 유지·다음 실행·최초 전환 및 실서버 다운로드 검증 |
+| feature-0046-native-client | in-progress | 2026-09-10 | [TASK](../unit/feature-0046-native-client/docs/TASK.md) |  |
 <!-- AI-EDITABLE:STATUS-TABLE:END -->
 
 ### Worktree 확인

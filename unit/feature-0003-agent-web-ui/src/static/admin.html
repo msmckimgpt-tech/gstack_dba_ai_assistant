@@ -5,6 +5,11 @@
   <link rel="icon" type="image/svg+xml" sizes="any" href="/static/brand/dqa.svg?v=dev" />
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- feature-0003 client-entry-gate (사용자 결정 2026-09-10): 관리 콘솔도 앱 전용이다.
+       앱 창에서는 SPA 의 [관리 콘솔] 버튼이 같은 탭으로 이동하므로 `sessionStorage` 의
+       브리지 좌표가 그대로 따라온다(app.js openAdminBtn) — 게이트가 통과시킨다.
+       앱이 이 경로를 직접 딥링크로 열면 주소의 좌표가 1차 신호다. -->
+  <script src="/static/client-gate.js?v=dev"></script>
   <title>DQA — Database Query Assistant Admin</title>
   <!-- feature-0038 Cycle 1: styles.css 순차 분할 — 원본 캐스케이드 순서 보존 (base→shell→chat→drawers→admin→profile→search-audit) -->
   <link rel="stylesheet" href="/static/css/base.css?v=dev" />
@@ -1359,6 +1364,14 @@
   <script src="/static/vendor/mermaid.min.js?v=mermaid-10.9.3"></script>
   <script src="/static/mermaid-render.js?v=dev"></script>
   <!-- 병합: admin.js 는 §57(하이라이트 hl-isolated) + graph-toolbar(툴바 통합·상태 오버레이) 통합본 — cache-buster 는 graph-toolbar 가 최신. -->
+  <!-- feature-0003 client-entry-gate: 브리지 좌표 규약의 **정본 모듈**을 관리 콘솔에서도
+       돌린다. 앱이 이 경로를 직접 딥링크로 열었을 때(주소에만 좌표가 있는 상태) 그 좌표를
+       다음 화면으로 넘기는 일을 이 모듈이 한다 — 없으면 새로고침 한 번에 앱 창이 자기를
+       브라우저로 오인해 관리자가 설치 안내로 튕긴다.
+       ⚠ `/admin` 은 `_PERSIST_SURFACES` 가 아니다(익명 도달 가능 = 링크로 좌표를 심을 수
+       있는 표면). 그래서 이 모듈은 여기서 **로컬 브리지에 ping 을 쏴 수용될 때만** 보관한다
+       — 공격자가 만든 nonce 는 브리지가 거절하므로 앱이 연 창만 통과한다. -->
+  <script type="module" src="/static/app/client-bridge.js?v=dev"></script>
   <script type="module" src="/static/admin.js?v=dev"></script>
   <script src="/static/textarea-autogrow.js?v=dev"></script>
   <!-- 릴리즈 노트: 데이터(콘텐츠) + 공유 렌더러. 작업 화면과 동일 파일을 공유한다. -->

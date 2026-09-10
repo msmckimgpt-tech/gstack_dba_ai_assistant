@@ -5,6 +5,11 @@
   <link rel="icon" type="image/svg+xml" sizes="any" href="/static/brand/dqa.svg?v=dev" />
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- feature-0003 client-entry-gate (사용자 결정 2026-09-10): 평범한 웹브라우저는 여기서
+       설치 안내(`/install`)로 간다. **동기·무의존 classic 스크립트이고 스타일시트보다
+       앞선다** — 뒤에 두면 CSS 를 기다리는 동안 화면이 반쯤 그려졌다가 튕긴다. 판정 규약은
+       파일 상단 주석 참조(정본은 static/app/client-bridge.js). -->
+  <script src="/static/client-gate.js?v=dev"></script>
   <title>DQA — Database Query Assistant</title>
   <!-- feature-0023 api-discovery: 외부 AI/에이전트가 사이트 탐색 중 Conversation API 를
        자연스럽게 인지하도록 하는 발견 포인터(기계판독, 화면 무영향). 상세: /api/ai/guide -->
