@@ -1471,3 +1471,14 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Verdict: PASS
 - Human Approval Needed: no
 - 제품 코드 추가 변경 없음. 6bdcc7ba는 native/web1.4.0 제품과 FUNCTION 동일성에 대한 독립 QA 확인 P1/P2 0 및 승인한 운영 복구 코드를 보존한다. 실제 Windows/공인 채널 증적은 기존 Run을 참조한다.
+
+## REV-20260910T115000-inapp-update-release [SKIPPED:non-policy-doc]
+- Related TASK: feature-0046-native-client / TASK-20260910-inapp-update
+- Trigger: 출하 증적·상태 문서만 변경, 정책·제품 코드 변경 없음 (§18.8.1).
+- Verification: 실제 배포/채널/Windows 결과 JSON과 문서 수치·버전·해시를 대조. 구현 독립 리뷰를 재실행한 결과가 아니다.
+- POLICY-ANCHOR: §16.5.1 included, §18.8.1 docs-only. 완료 정책 SHA-256 21286d42d52a987af6bed233fb5c050b429ddfa77d33b4979fea3acb4a17fdef.
+
+## REV-20260910T115500-inapp-update-integration [SKIPPED:non-policy-doc]
+- Related TASK: feature-0046-native-client / TASK-20260910-inapp-update
+- Trigger: 비정책 출하 문서 병합 정합, 제품 코드 변경 없음.
+- Verification: TASK/MODIFY/REVIEW 양쪽 신규 기록 보존, REPORT1.4.0 현재 상태 및1.3.1 과거 출하 경계 확인. origin/main 대비 native/web src diff0, conflict marker0. 새 제품 리뷰나 재배포 PASS를 뜻하지 않는다.
