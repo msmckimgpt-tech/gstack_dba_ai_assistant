@@ -1075,3 +1075,7 @@ edit_policy: append-only
 - Timestamp: 2026-09-10T11:46:00+09:00
 - c684d12a의 1.4.0 제품·템플릿 v3.54.3을 통합했다. origin/main 대비 제품 변경은 본 cycle의 Windows portproxy 운영 코드뿐이고 native 변경은 테스트 하네스뿐이다. FUNCTION은 최신1.4.0 계약을 보존한다.
 - 정책 diff는 template_version 한 줄이며 본문 계약은 동일하다. 현재 AGENTS SHA256 21286d42d52a987af6bed233fb5c050b429ddfa77d33b4979fea3acb4a17fdef.
+
+## CHG-20260910T114800-postmerge-record
+- Timestamp: 2026-09-10T11:48:00+09:00
+- 통합6bdcc7ba의 최신1.4.0 제품 보존과 출하 증적을 확인했다. merge combined diff를 읽는 post-commit gate의 checkbox/CHG/REVIEW 미인식은 정상 후속 문서 커밋으로 정합한다. 제품·운영 bytes 추가 변경 없음.

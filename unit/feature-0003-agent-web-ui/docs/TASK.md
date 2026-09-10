@@ -14046,3 +14046,5 @@ cross-feature (docs 홈 = 파일 소유 feature 인 feature-0003; agent-core 측
 - [x] 웹배포와실제DQA로그인화면확인 (public/localhost 다운로드·실제 기본 DQA 화면 PASS)
 
 - [x] 1.3.1 공개·웹 배포·공인 주소 복구와 실제 DQA 최종 증적 정합
+
+- [x] 통합6bdcc7ba의 양 부모 보존·충돌 해소 독립 검토 및 최종 출하 기록 확인

@@ -1463,3 +1463,11 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Verdict: PASS
 - Human Approval Needed: no
 - 고정 c684d12a 대비 native/web src와 native FUNCTION 동일, TASK/REPORT의1.4.0 본문 보존 및1.3.1 증적 병존 확인. 추가 P1/P2 0, 충돌0, diff check PASS.
+
+## REV-20260910T114800-postmerge-record [SKIPPED:non-policy-doc]
+- Related TASK: TASK-20260910-transparent-icon-release
+- Timestamp: 2026-09-10T11:48:00+09:00
+- Trigger: 비정책 merge 결과/출하 기록 정합.
+- Verdict: PASS
+- Human Approval Needed: no
+- 제품 코드 추가 변경 없음. 6bdcc7ba는 native/web1.4.0 제품과 FUNCTION 동일성에 대한 독립 QA 확인 P1/P2 0 및 승인한 운영 복구 코드를 보존한다. 실제 Windows/공인 채널 증적은 기존 Run을 참조한다.
