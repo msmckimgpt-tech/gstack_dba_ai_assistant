@@ -104,8 +104,6 @@ def main() -> int:
     ap.add_argument("--negative", action="store_true",
                     help="역검증 — 구 '···' 계약으로 재서 하네스가 실제로 이 변경을 재는지 확인")
     ap.add_argument("--keep", action="store_true", help="테스트 폴더·대화를 지우지 않는다")
-    ap.add_argument("--send", action="store_true",
-                    help="F4(첫 메시지 전송 → 폴더 배정)까지 수행. 서비스 데이터가 1건 생긴다")
     args = ap.parse_args()
 
     results: list[tuple[str, bool, str]] = []
@@ -119,11 +117,33 @@ def main() -> int:
         ctx = browser.contexts[0]
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.bring_to_front()  # 비활성 탭은 rAF/타이머가 throttle 돼 렌더 타이밍이 실제와 달라진다.
-        page.goto(args.url, wait_until="domcontentloaded")
+        # client-entry-gate(2026-09-10 배포): 일반 브라우저의 맨 `/` 방문은 `/install` 안내로 보내진다.
+        # 이 검증은 «앱이 호스팅하는 공유 화면» 을 재는 것이므로, DQA 앱이 붙일 때와 같은 좌표 신호를
+        # 실어 게이트를 통과한다(그 게이트 자체는 이 변경의 범위가 아니다).
+        entry = args.url.rstrip("/") + "/?client_port=1&client_nonce=pb0008-folder-newconv"
+        page.goto(entry, wait_until="domcontentloaded")
         page.wait_for_timeout(2500)
+        if "/install" in page.url:
+            print(f"  FAIL  [게이트] 진입 신호에도 설치 안내로 이동함: {page.url}")
+            return 2
 
         errors: list[str] = []
         page.on("pageerror", lambda e: errors.append(str(e)))
+
+        # 진입 신호를 실으면 앱이 로컬 브리지 «연결» 모달을 띄운다(이 검증의 대상이 아니며,
+        # 오버레이가 사이드바 클릭을 가로챈다). 사이드바를 만지기 전에 닫아 둔다.
+        def dismiss_overlays() -> None:
+            for _ in range(3):
+                shown = page.evaluate(
+                    "() => Boolean(document.getElementById('connectModalOverlay'))")
+                if not shown:
+                    return
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(400)
+            # Escape 로 안 닫히면 오버레이만 제거한다(제품 상태를 바꾸지 않는 DOM 수준 회피).
+            page.evaluate(
+                "() => { const n = document.getElementById('connectModalOverlay'); if (n) n.remove(); }")
+        dismiss_overlays()
 
         # ── 준비: 테스트 폴더 2개 생성(형제 폴더가 있어야 «다른 폴더로 새지 않는다» 를 잰다)
         mk = """
@@ -141,8 +161,9 @@ def main() -> int:
         ok("[준비] 테스트 폴더 2개 생성", fid_a > 0 and fid_b > 0, f"A={fid_a} B={fid_b}")
         if not (fid_a and fid_b):
             return 2
-        page.reload(wait_until="domcontentloaded")
+        page.goto(entry, wait_until="domcontentloaded")  # reload 대신 같은 진입 신호로 재적재(게이트 통과 유지)
         page.wait_for_timeout(2500)
+        dismiss_overlays()
 
         # ── F1: 폴더 행의 트리거
         row = page.evaluate(READ_FOLDER_ROW, fid_a)
@@ -196,41 +217,68 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001
             ok("[F5] 사이드바 캡처", False, str(exc))
 
-        # ── F4: 전송 → 폴더 배정 (opt-in — 서비스 데이터가 생긴다)
-        new_cid = ""
-        if args.send:
-            page.fill("#promptInput", f"{MARK} 배정 확인용 단문")
-            page.click("#sendBtn")
-            # cid 는 /api/new_conversation 또는 /api/ask 응답에서 확정된다. 배정 PATCH 가
-            # 그 직후 나가므로, 서버 목록에서 folder_id 가 채워질 때까지 폴링한다.
-            deadline = time.time() + 90
-            assigned = None
-            while time.time() < deadline:
-                page.wait_for_timeout(3000)
-                data = page.evaluate("""
-                  async () => {
-                    const r = await fetch('/api/conversations');
-                    const j = await r.json();
-                    return (j.conversations || j.items || []).slice(0, 10).map(
-                      (c) => ({ id: String(c.id), folder_id: c.folder_id, topic: c.topic || '' }));
-                  }
-                """)
-                hit = next((c for c in data if c.get("folder_id") is not None
-                            and int(c["folder_id"]) == int(fid_a)), None)
-                if hit:
-                    assigned = hit
-                    new_cid = hit["id"]
-                    break
-            ok("[F4] ★ 전송한 새 대화가 서버에서 폴더 A 에 배정됨", assigned is not None,
-               json.dumps(assigned, ensure_ascii=False) if assigned else "타임아웃")
+        # ── F4: 폴더 배정 왕복 (라이브 서버 계약)
+        #   원래는 "첫 메시지를 보내면 그 대화가 폴더에 들어간다" 를 통째로 재려 했으나, 서버 LLM
+        #   폐기 이후 질의는 **DQA 앱의 로컬 브리지**로만 가므로 일반 브라우저에서는 `#promptInput`
+        #   이 비활성이다(실측: `element is not enabled`). 그래서 여기서는 프론트가 cid 확정 직후
+        #   호출하는 **바로 그 배정 왕복**을 라이브 서버에 대고 재고, 사이드바가 그 결과를 폴더 하위로
+        #   그리는지까지 확인한다. 「전송 → 자동 배정」 배선 자체는 jsdom(case7 + 배선 잠금)이 덮으며
+        #   라이브 미검증임을 Run 기록에 분리 표기한다.
+        assign = page.evaluate(
+            """
+            async (fid) => {
+              const r1 = await fetch('/api/new_conversation', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: 'auto' }),
+              });
+              const j1 = await r1.json();
+              const cid = String(j1 && j1.conversation_id || '');
+              if (!cid) return { cid: '', step: 'new_conversation', status: r1.status };
+              const r2 = await fetch(`/api/conversations/${encodeURIComponent(cid)}/folder`, {
+                method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ folder_id: fid }),
+              });
+              const j2 = await r2.json();
+              const r3 = await fetch('/api/conversations');
+              const j3 = await r3.json();
+              const row = (j3.items || j3.conversations || []).find((c) => String(c.id) === cid) || null;
+              return { cid, patchStatus: r2.status, patched: j2 && j2.folder_id,
+                       listedFolderId: row ? row.folder_id : null };
+            }
+            """, fid_a)
+        new_cid = str(assign.get("cid") or "")
+        ok("[F4] 새 대화 cid 발급", bool(new_cid), json.dumps(assign, ensure_ascii=False))
+        ok("[F4] ★ 폴더 배정 PATCH 200", assign.get("patchStatus") == 200)
+        ok("[F4] ★ 서버 목록의 folder_id 가 그 폴더", str(assign.get("listedFolderId")) == str(fid_a))
+
+        # ── F4b: 재적재 후 사이드바가 그 대화를 폴더 하위에 그린다
+        page.goto(entry, wait_until="domcontentloaded")
+        page.wait_for_timeout(2500)
+        dismiss_overlays()
+        lst2 = page.evaluate(READ_LIST)
+        rows2 = lst2.get("rows") or []
+        i_a = next((i for i, r in enumerate(rows2) if r["folderId"] == str(fid_a)), -1)
+        i_conv = next((i for i, r in enumerate(rows2) if r["convId"] == new_cid), -1)
+        nxt = next((i for i, r in enumerate(rows2) if r["isFolderHeader"] and i > i_a), len(rows2))
+        ok("[F4b] 그 대화가 사이드바에 렌더", i_conv >= 0)
+        ok("[F4b] ★ 폴더 A 하위에 위치", i_a >= 0 and i_a < i_conv < nxt, f"A={i_a} conv={i_conv} next={nxt}")
 
         ok("[전역] pageerror 0", len(errors) == 0, "; ".join(errors[:3]))
 
         # ── 정리: 본 스크립트가 만든 것만
         if not args.keep:
             cleanup = """
-            async ([ids, cid]) => {
+            async ([mark, cid]) => {
               const out = [];
+              // 이름(MARK) 기준으로 **전수** 삭제한다 — 앞선 실행이 중간에 끊겨 남긴 잔여까지
+              // 같이 청소해야 라이브에 테스트 폴더가 쌓이지 않는다.
+              let ids = [];
+              try {
+                const r = await fetch('/api/folders');
+                const j = await r.json();
+                ids = (j.folders || []).filter((f) => String(f.name || '').indexOf(mark) >= 0)
+                                       .map((f) => f.folder_id);
+              } catch (e) { out.push('list err ' + e); }
               if (cid) {
                 try {
                   // 대화 삭제는 REST DELETE 가 아니라 POST /api/delete_conversation 이다.
@@ -250,7 +298,7 @@ def main() -> int:
               return out;
             }
             """
-            print("  [정리]", page.evaluate(cleanup, [[fid_a, fid_b], new_cid]))
+            print("  [정리]", page.evaluate(cleanup, [MARK, new_cid]))
 
     passed = sum(1 for _, c, _ in results if c)
     failed = len(results) - passed

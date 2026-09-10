@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260910T090500-folder-newconv-runs [SKIPPED:non-policy-doc] — 라이브 실측 결과 원장 반영
+
+- Related TASK: feature-0024-conversation-folders / TASK-20260910T064200-folder-newconv
+- Reason: 제품 표면(서빙 HTML/CSS/JS)·정책 문서 변경 0. 배포 후 실측을 수행하며 보정한 **검증 스크립트**
+  (`tests/pb0008_folder_newconv.py` — 진입 게이트 통과 신호 · 연결 모달 dismiss · F4 를 라이브에서 잴 수
+  있는 배정 왕복으로 재구성 · 테스트 폴더 이름 기준 전수 정리)와 그 **Run 기록**(Run 3·4 append)뿐이다.
+  판정 근거는 Run 본문에 있다(21건 PASS · 역검증 3건 FAIL · 미검증 3건 분리 표기).
+- Timestamp: 2026-09-10T09:05:00Z
+
 ## REV-20260910T064200-folder-newconv [SUBAGENT:ux+design] — PASS (P1 3건 전건 in-cycle 수정)
 
 - Related TASK: feature-0024-conversation-folders / TASK-20260910T064200-folder-newconv (코드 거주 feature-0003)

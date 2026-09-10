@@ -8,6 +8,12 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260910T090500-folder-newconv-runs [SKIPPED:non-policy-doc] — 라이브 실측 결과 원장 반영
+- Related TASK: feature-0024-conversation-folders / TASK-20260910T064200-folder-newconv
+- Reason: 제품 표면(서빙 HTML/CSS/JS)·정책 문서 변경 0 — 배포 후 실측 중 보정한 **검증 스크립트**와 그 **Run 기록**뿐이다. 판정 근거는 `unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260910T064200-folder-newconv.md` Run 3·4 본문(21건 PASS · 역검증 3건 FAIL · 미검증 3건 분리 표기).
+- Timestamp: 2026-09-10T09:05:00Z
+
+
 ## REV-20260910T064200-folder-newconv [SUBAGENT:ux+design] — PASS (P1 3건 전건 in-cycle 수정)
 - Related TASK: feature-0024-conversation-folders / TASK-20260910T064200-folder-newconv (코드 거주 feature-0003-agent-web-ui)
 - Trigger: `UI/button/layout` + `버튼/화면/레이아웃` keyword matched (§18.8 dispatch 표 3행 → ux · design)
