@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
+  <title id="title">DQA</title>
+  <defs>
+    <linearGradient id="brand" gradientUnits="userSpaceOnUse" x1="280" y1="285" x2="1000" y2="1050">
+      <stop stop-color="#00afe5"/>
+      <stop offset=".5" stop-color="#6260ed"/>
+      <stop offset="1" stop-color="#dc14c1"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(-125 -160)" fill="url(#brand)">
+    <path d="M366 250H812L1002 440V922L890 818V488L778 369H430L367 477V771L475 882H812L1020 1094H874L778 998H437L252 813V442Z"/>
+    <path d="M504 523H767L790 548L744 602H455V590Z"/>
+    <path d="M504 667H767L790 692L744 746H455V734Z"/>
+  </g>
+</svg>

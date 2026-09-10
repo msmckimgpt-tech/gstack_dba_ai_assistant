@@ -3215,6 +3215,10 @@ Windows CPython 3.14.7에서 직접 재실행/클라이언트 감독 × 동시/�
 - 사용자는 **DQA 앱에서 1.1.1로 업데이트한 뒤 다시 연결**한다. 별도 러너 실행·터미널 명령은 필요 없다. 실제 두 러너 복귀 및 파싱 전 실패 복구 실측은 아래 정본에 기록했다.
 - 검증 정본: `unit/feature-0043-external-llm-bridge/docs/test-runs.d/TASK-20260908T120000-runner-update-recovery.md`.
 
+## 2026-09-08 — 투명 아이콘/작업 표시줄 검수 (#1612)
+
+투명 SVG 정본과 PNG/ICO, Windows 앱 식별자·창 relaunch 속성·바로가기 ID, 웹 6진입점 favicon을 반영했다. 네이티브 529건·웹 30건, Windows 빌드/5표면/실제 작업 표시줄과 소스·동결본 식별자, Windows 브라우저 소스 검증 PASS. 기존 사용 중인 설치/앱은 유지했다. 현재 남은 단계는 PR 병합·1.1.3 채널/웹 배포·라이브 검증이다. 상세는 test-runs.d/20260908T-transparent-favicon.md.
+
 
 ### TASK-20260908T020000-delegation-friction — 교차 검증 보완
 
@@ -3321,3 +3325,26 @@ nonce 를 덮어쓸 수 있었다(실행 재현). ② 브리지 좌표 캡처가
 **이연 8건**은 TASK.md 「남은 것 · 후속」과 2R artifact §이연에 근거와 함께 남겼다 — 그중
 둘(브라우저 명령줄의 토큰, 스킴 하이재킹 노출 빈도)은 이 변경이 **키운** 축이므로 다음 cycle 의
 후보로 명시한다.
+
+### 투명 아이콘 최신 상태 — 2026-09-08
+
+소스 8231cffe, main 병합 2838ce58. 병합 후 native 전체 **536 PASS**, 웹 **30 PASS**, 아이콘/자산 일치·Windows 5표면·source Tk/WebView2 생명주기·frozen 속성/정상 종료 PASS. 내부 로고 4곳의 Windows Chrome 로그인 렌더·디자인 PASS. **현재 Windows 잠금 화면이 최종 taskbar 캡처를 가려 시각 검수는 대기**하며, 최종 frozen PNG를 PASS라고 보았던 이전 판정은 철회했다. 사용 중인 앱은 유지했다.
+
+배포 후보는 artifacts/dqa-transparent-icon/DQAConnect-Setup-1.1.3.exe, 25,876,951 bytes, SHA-256 132d5d715b73673c60c78cb54e1957f9b5c117612c4d1a26e9b9fbc75df903ac. 기존 채널의 1.1.2를 아직 전환하지 않았다. 잠금 해제 후 최종 검수→병합→기존 채널 게시→web-only rolling 배포→실제 다운로드/앱 로고 확인을 수행한다.
+
+### 재개 위치
+
+- Draft PR: [#1617](https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant/pull/1617), branch `ai/codex/feature-0046-transparent-taskbar-icon`, worktree `../.worktrees/feature-0046-transparent-taskbar-icon`(wrapper 기준 `.worktrees/...`). 원격 CI check 없음; 로컬 536+30 PASS와 실제 Windows 부분 증적을 정본으로 둔다.
+- Windows 잠금 해제 요청에 대한 응답 대기. 검사 편의를 위한 사용자 잠금 해제·기존 앱 종료·재설치는 하지 않았다. 후보 설치기와 해시는 위 최신 상태 참조.
+- 이후: 최신 tests/windows를 Windows 임시 `dqa-transparent-icon/tests`에 복사→`verify_frozen_taskbar.py --app <dist/DQAConnect/DQAConnect.exe> --out <새 경로>`→유효 taskbar PNG 직접 확인. `capture_taskbar.ps1`가 LockScreenBackstopFrame을 거부하므로 상태가 같으면 반복하지 않는다.
+- 실제 앱 내부 로고도 확인한다(PB-0009). 별도 frozen 진단 프로세스에만 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`를 주는 두 시도에서 CDP endpoint가 나타나지 않았다. 레지스트리/사용자 앱은 변경하지 않았고 두 인스턴스는 자기 트레이 종료 exit0. 필요 시 지원되는 앱 검수 방식 또는 잠금 해제 후 실제 화면으로 확인한다. 일반 Chrome 결과를 앱 검증으로 바꾸지 않는다.
+- 검수 후 PR ready/병합·`publish_release.py --setup <1.1.3> --dir <wrapper>/artifacts/client-release`·main `bin/deploy-web.sh --web-only`·rootCA TLS 검증한 manifest/실제 다운로드 hash·웹/앱 자산 검증→완료 문서와 자기 worktree 정리. 새 버전 게시 전에 main/channel에 1.1.3 충돌이 없는지 확인한다.
+
+## 20260910-transparent-icon-release
+
+- Related TASK: TASK-20260910-transparent-icon-release
+- Timestamp: 2026-09-10T11:11:47+09:00
+- 클라이언트1.3.1과같은투명SVG/ICO를6favicon/4로고에적용하고릴리스노트를추가. 웹30/노트34PASS, 디자인독립검토PASS. 배포후실제DQA로그인로고확인예정.
+- Verdict: PASS
+- Human Approval Needed: no
+- [통합검증](../../feature-0046-native-client/docs/test-runs.d/20260910-transparent-icon-release.md).

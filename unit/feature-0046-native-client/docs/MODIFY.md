@@ -894,6 +894,30 @@ edit_policy: append-only
 ## CHG-20260908T024700-brand-published
 - Related TASK: TASK-20260908-brand-icon
 - PR #1608 병합 및 1.1.2 라이브 릴리스 완료. TASK/REPORT/검증 기록·릴리스 노트에 실제 엣지 다운로드 200, 26,023,355 bytes, 검증 빌드와 SHA-256/byte 동일을 기록했다. 코드·아이콘 자산 변경 없음.
+## CHG-20260908T-transparent-taskbar
+- Related TASK: TASK-20260908T-transparent-taskbar; issue #1612.
+- 사유: 사용자 제보로 기존 5표면 검사가 Windows 작업 표시줄 식별자와 실제 버튼을 포함하지 않았음을 확인. 투명 배경 요구와 승인된 SVG 정리 방식 반영.
+- 변경: 프로세스와 실제 창·시작 메뉴/바탕화면/자동실행 바로가기는 Masangsoft.DQA.Connect ID를 공유한다. 작업 표시줄 재실행 명령·표시 이름·아이콘을 명시하고 현재 실행 인자를 저장하지 않는다. Tk는 최종 HWND가 정해지는 Map 때 적용하며 실제 창 파괴 직전에만 속성을 VT_EMPTY로 해제한다.
+- 검증 정본: feature-0046-native-client/docs/test-runs.d/20260908T-transparent-taskbar.md.
+
+## CHG-20260908T035000-transparent-verification
+
+- Related TASK: TASK-20260908T-transparent-taskbar / #1612
+- 로그인·사이드바·빈 대화·관리 사이드바 로고 이미지 4곳을 같은 SVG로 정합했다. 기존 크기와 배치는 유지한다.
+- 실제 잠금 화면이 작업 표시줄 캡처를 가리는 경우를 검수 도구에서 차단한다. 정상 종료 이전 PASS 기록도 바로잡았다. 최종 시각 확인과 배포는 잔여 단계로 명시한다.
+
+## CHG-20260908T035400-transparent-main-evidence
+
+- Related TASK: TASK-20260908T-transparent-taskbar / #1612
+- main 동기화 문서 충돌 4개는 양쪽 신규 기록을 모두 보존했다. 544cfed9/a92c9256 양 부모 삭제 파일·문서 제목 유실 0, 자동 병합 코드 포함 대조. 8231cffe 대비 native src 변경 0이므로 검증된 1.1.3 빌드와 동일하다.
+- 병합 후 native 536 PASS(50.204초), 웹 30 PASS. 디자인 추가 리뷰도 P1/P2/P3 0.
+- 동결본 속성·리소스·종료는 PASS지만 잠금 화면으로 최종 taskbar PNG는 NOT-RUN으로 남긴다. 일반 브라우저 결과를 앱 전체 검증으로 합산하지 않는다.
+
+## CHG-20260908T035530-transparent-handoff
+
+- Related TASK: TASK-20260908T-transparent-taskbar / #1612
+- draft PR #1617·검증된 1.1.3 후보·잠금 해제 후 재검수/배포 순서를 인계한다. 원격 CI check가 보고되지 않아 CI PASS로 주장하지 않는다.
+- 별도 검사 DQA 두 인스턴스는 정상 exit=0, 별도 Chrome/relay만 종료했다. 기존 사용자 앱과 프로필은 유지했다. 제품 코드 변경 없음.
 ## CHG-20260908T123400-connect-discovery — AI별 자동 연결과 클라이언트 위치 재사용 (#1615)
 - Timestamp: 2026-09-08T12:34:00+09:00
 - Related TASK: TASK-20260908T120000-connect-discovery-ux
@@ -1023,3 +1047,13 @@ edit_policy: append-only
 ## CHG-20260909T173353-nondisruptive-shipping — 출하 증적 정합
 - Timestamp: 2026-09-09T17:33:53+09:00
 - 제품PR1663 병합,1.3.0 공개채널·다운로드바이트·웹배포 증적을추가하고 FUNCTION/REPORT/TASK를정합한다. Windows복사JSON·검증script의불필요한실행권한을644로정규화했다. 제품코드변경없음.
+
+## CHG-20260910-transparent-icon-release — 최신1.3.0 통합과 투명 아이콘 출하 준비
+- Timestamp: 2026-09-10T11:11:47+09:00
+- TASK: TASK-20260910-transparent-icon-release
+- 1.3.1 버전, 안정launcher/ICO, 기존launcher 교체, 실패활성화차단, 실패완료안내, 신규/upgrade제거 정합. 옛1.1.3후보미게시. mainDOM테스트nonce기대값정합.
+- native624/웹30/노트34·실제Windows설치/아이콘/실패/제거 증적: [원장](test-runs.d/20260910-transparent-icon-release.md).
+
+## CHG-20260910T111451-icon-integration-record
+- Timestamp: 2026-09-10T11:14:51+09:00
+- merge commit combined diff에서 checkbox/CHG/review 항목을 읽지 못한 post-commit 검사에 대해 정상 후속 커밋으로 이번 cycle 완료 기록을 추가한다. 제품 bytes는 변경하지 않는다.

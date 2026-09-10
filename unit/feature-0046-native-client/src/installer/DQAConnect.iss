@@ -33,6 +33,7 @@
 #define MyDisplayName "DQA"
 #define MyAppExe "DQAConnect.exe"
 #define MyPublisher "Masangsoft"
+#define MyAppUserModelID "Masangsoft.DQA.Connect"
 
 ; 버전 정본은 `src/client/version.py` 의 `CLIENT_VERSION` 이고, `build_client.py` 가
 ; `/DAppVersion=` 으로 주입한다. 아래 폴백은 **손으로 ISCC 를 부를 때만** 쓰이며 정본과
@@ -42,7 +43,7 @@
 ;   업데이트 판정은 «항상 새것»(무한 재설치) 또는 «영원히 최신»(아무도 못 받음) 중 하나로
 ;   고장난다. 어느 쪽이든 사용자에게는 원인이 보이지 않는다.
 #ifndef AppVersion
-  #define AppVersion "1.3.0"
+  #define AppVersion "1.3.1"
 #endif
 #define MyAppVersion AppVersion
 
@@ -71,7 +72,7 @@ SetupIconFile=..\client\assets\dqa.ico
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#MyAppName}
-UninstallDisplayIcon={app}\DQALauncher.exe
+UninstallDisplayIcon={app}\dqa.ico
 CloseApplications=no
 RestartApplications=no
 SetupMutex=Global\DQAConnectSetup
@@ -100,18 +101,19 @@ Type: files; Name: "{autodesktop}\{#MyAppName}.lnk"
 Type: files; Name: "{userstartup}\{#MyAppName}.lnk"
 
 [Files]
+Source: "..\client\assets\dqa.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#AppDir}\*"; DestDir: "{code:GetSlotDir}"; Excludes: "install-complete.txt"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; Verify the complete payload before shortcuts or activation can change.
 Source: "{#AppDir}\install-complete.txt"; DestDir: "{code:GetSlotDir}"; Flags: ignoreversion; AfterInstall: VerifySlot
-Source: "{#Launcher}"; DestDir: "{app}"; DestName: "DQALauncher.exe"; Flags: onlyifdoesntexist
+Source: "{#Launcher}"; DestDir: "{app}"; DestName: "DQALauncher.pending.exe"; Flags: ignoreversion; AfterInstall: UpdateLauncher
 Source: "{#Launcher}"; DestDir: "{app}"; DestName: "DQAConnect.exe"; Flags: ignoreversion; Check: NeedsCompatibilityEntry; BeforeInstall: PreserveLegacyEntry
 
 [Icons]
 ; 아이콘은 **보이는 이름**을 쓴다 — 사용자가 누르는 것이 곧 DQA 다.
-Name: "{group}\{#MyDisplayName}"; Filename: "{app}\DQALauncher.exe"
+Name: "{group}\{#MyDisplayName}"; Filename: "{app}\DQALauncher.exe"; IconFilename: "{app}\dqa.ico"; AppUserModelID: "{#MyAppUserModelID}"
 Name: "{group}\{#MyDisplayName} 제거"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyDisplayName}"; Filename: "{app}\DQALauncher.exe"; Tasks: desktopicon
-Name: "{userstartup}\{#MyDisplayName}"; Filename: "{app}\DQALauncher.exe"; Tasks: startup
+Name: "{autodesktop}\{#MyDisplayName}"; Filename: "{app}\DQALauncher.exe"; Tasks: desktopicon; IconFilename: "{app}\dqa.ico"; AppUserModelID: "{#MyAppUserModelID}"
+Name: "{userstartup}\{#MyDisplayName}"; Filename: "{app}\DQALauncher.exe"; Tasks: startup; IconFilename: "{app}\dqa.ico"; AppUserModelID: "{#MyAppUserModelID}"
 
 [Registry]
 ; `dqa-connect://` 스킴 핸들러 — 웹의 [내 AI 실행] 이 이 프로그램을 **연결 정보와 함께** 띄운다.
@@ -123,10 +125,12 @@ Name: "{userstartup}\{#MyDisplayName}"; Filename: "{app}\DQALauncher.exe"; Tasks
 ; per-user 설치이므로 HKCU 에 쓴다(관리자 권한 불필요).
 Root: HKCU; Subkey: "Software\Classes\dqa-connect"; ValueType: string; ValueName: ""; ValueData: "URL:{#MyDisplayName}"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\dqa-connect"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
-Root: HKCU; Subkey: "Software\Classes\dqa-connect\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\DQALauncher.exe,0"
+Root: HKCU; Subkey: "Software\Classes\dqa-connect\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\dqa.ico,0"
 Root: HKCU; Subkey: "Software\Classes\dqa-connect\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\DQALauncher.exe"" ""%1"""
 
 [UninstallDelete]
+Type: files; Name: "{app}\DQALauncher.exe"
+Type: files; Name: "{app}\DQALauncher.pending.exe"
 Type: files; Name: "{app}\active-slot.txt"
 Type: files; Name: "{app}\DQAConnect.legacy*.exe"
 
@@ -139,6 +143,8 @@ Filename: "{app}\DQALauncher.exe"; Flags: nowait runasoriginaluser; Check: Relau
 var
   SlotName: String;
   Activated: Boolean;
+  SlotVerified: Boolean;
+  LauncherReady: Boolean;
   HadInstallation: Boolean;
   LegacyBackup: String;
 
@@ -166,8 +172,33 @@ begin
   Result := ExpandConstant('{app}\versions\') + SlotName;
 end;
 
+procedure UpdateLauncher;
+var
+  Attempt: Integer;
+  ErrorCode: Cardinal;
+begin
+  if not SlotVerified then Exit;
+  { The launcher protocol is unchanged; only its icon changes in this release. }
+  for Attempt := 1 to 50 do
+  begin
+    if MoveFileEx(ExpandConstant('{app}\DQALauncher.pending.exe'),
+                  ExpandConstant('{app}\DQALauncher.exe'), 9) then
+    begin
+      LauncherReady := True;
+      Exit;
+    end;
+    ErrorCode := DLLGetLastError;
+    Log('DQA launcher replacement retry: Windows error ' + IntToStr(ErrorCode));
+    if (ErrorCode <> 5) and (ErrorCode <> 32) and (ErrorCode <> 33) then Break;
+    Sleep(100);
+  end;
+  RaiseException('실행기를 갱신하지 못했습니다. 현재 앱과 기존 실행 대상을 유지합니다.');
+end;
+
 function NeedsCompatibilityEntry: Boolean;
 begin
+  Result := False;
+  if not SlotVerified or not LauncherReady then Exit;
   Result := True;
   if FileExists(ExpandConstant('{app}\DQAConnect.exe')) and
      FileExists(ExpandConstant('{app}\DQALauncher.exe')) then
@@ -194,6 +225,7 @@ end;
 
 procedure DeinitializeSetup;
 begin
+  DeleteFile(ExpandConstant('{app}\DQALauncher.pending.exe'));
   if not Activated and (LegacyBackup <> '') and FileExists(LegacyBackup) then
   begin
     if FileExists(ExpandConstant('{app}\DQAConnect.exe')) and
@@ -216,6 +248,7 @@ begin
     RaiseException('새 버전을 검사하지 못했습니다. 기존 버전을 유지합니다.');
   if Code <> 0 then
     RaiseException('새 버전의 실행 검사에 실패했습니다. 기존 버전을 유지합니다.');
+  SlotVerified := True;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -229,6 +262,9 @@ begin
                        FileExists(ExpandConstant('{app}\active-slot.txt'));
   if CurStep = ssPostInstall then
   begin
+    { Inno may suppress an AfterInstall exception and continue copying files. }
+    if not SlotVerified or not LauncherReady then
+      RaiseException('설치를 완료하지 못했습니다. 기존 실행 대상을 유지합니다.');
     PointerFile := ExpandConstant('{app}\active-slot.txt');
     TempPointer := ExpandConstant('{app}\active-slot.pending');
     if not SaveStringToFile(TempPointer, SlotName, False) then
@@ -276,4 +312,13 @@ begin
       Result := True;
       Exit;
     end;
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if (CurPageID = wpFinished) and not Activated then
+  begin
+    WizardForm.FinishedHeadingLabel.Caption := '설치를 완료하지 못했습니다';
+    WizardForm.FinishedLabel.Caption := '현재 앱과 연결은 계속 사용할 수 있습니다. 기존 실행 대상을 유지했습니다. 설치 오류를 확인한 뒤 다시 시도해 주세요.';
+  end;
 end;

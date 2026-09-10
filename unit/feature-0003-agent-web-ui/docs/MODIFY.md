@@ -6535,3 +6535,40 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
 - **미검증 정직 표기**: 자동 갱신은 열어 둔 앱에서 실측했으나 그때 화면이 비어 있었고, 표·비교 정렬은 사용자 계정 실제 첨부로의 확인이 남았다 — 항목 detail 과 **접힌 summary 양쪽**에 명시했다.
 - 캐시버스터 수기 bump 없음: 소스 `?v=dev` 고정 + 빌드 `inject_asset_stamp` content-hash 주입 + 배포 ABORT 가드(`docs/CONVENTIONS.md` §14.1 「수기 bump 금지」). 오케스트레이터 지시문의 bump 요구는 이 계약에 비추어 stale 이다.
 - 검증: `node --check` PASS · `tests/verify_release_notes.mjs` **ALL PASS 34/0**(baseline 동일).
+
+
+## CHG-20260908T-transparent-taskbar
+- Related TASK: TASK-20260908T-transparent-taskbar; issue #1612.
+- 사유: 사용자 제보로 기존 5표면 검사가 Windows 작업 표시줄 식별자와 실제 버튼을 포함하지 않았음을 확인. 투명 배경 요구와 승인된 SVG 정리 방식 반영.
+- 변경: index/admin/share/ai-connect/oauth-callback/oauth-consent의 favicon은 같은 투명 DQA SVG/ICO를 쓴다. export_icon.py가 native 정본에서 web static/brand를 함께 재생성한다. 브라우저 프로필과 로그인 동선·화면 테마는 유지한다.
+- 검증 정본: feature-0046-native-client/docs/test-runs.d/20260908T-transparent-taskbar.md.
+
+## CHG-20260908T035000-transparent-verification
+
+- Related TASK: TASK-20260908T-transparent-taskbar / #1612
+- 로그인·사이드바·빈 대화·관리 사이드바 로고 이미지 4곳을 같은 SVG로 정합했다. 기존 크기와 배치는 유지한다.
+- 실제 잠금 화면이 작업 표시줄 캡처를 가리는 경우를 검수 도구에서 차단한다. 정상 종료 이전 PASS 기록도 바로잡았다. 최종 시각 확인과 배포는 잔여 단계로 명시한다.
+
+## CHG-20260908T035400-transparent-main-evidence
+
+- Related TASK: TASK-20260908T-transparent-taskbar / #1612
+- main 동기화 문서 충돌 4개는 양쪽 신규 기록을 모두 보존했다. 544cfed9/a92c9256 양 부모 삭제 파일·문서 제목 유실 0, 자동 병합 코드 포함 대조. 8231cffe 대비 native src 변경 0이므로 검증된 1.1.3 빌드와 동일하다.
+- 병합 후 native 536 PASS(50.204초), 웹 30 PASS. 디자인 추가 리뷰도 P1/P2/P3 0.
+- 동결본 속성·리소스·종료는 PASS지만 잠금 화면으로 최종 taskbar PNG는 NOT-RUN으로 남긴다. 일반 브라우저 결과를 앱 전체 검증으로 합산하지 않는다.
+
+## CHG-20260908T035530-transparent-handoff
+
+- Related TASK: TASK-20260908T-transparent-taskbar / #1612
+- draft PR #1617·검증된 1.1.3 후보·잠금 해제 후 재검수/배포 순서를 인계한다. 원격 CI check가 보고되지 않아 CI PASS로 주장하지 않는다.
+- 별도 검사 DQA 두 인스턴스는 정상 exit=0, 별도 Chrome/relay만 종료했다. 기존 사용자 앱과 프로필은 유지했다. 제품 코드 변경 없음.
+
+## CHG-20260910-transparent-icon-release
+
+- Related TASK: TASK-20260910-transparent-icon-release
+- Timestamp: 2026-09-10T11:11:47+09:00
+- 클라이언트1.3.1과같은투명SVG/ICO를6favicon/4로고에적용하고릴리스노트를추가. 웹30/노트34PASS, 디자인독립검토PASS. 배포후실제DQA로그인로고확인예정.
+- Verdict: PASS
+- Human Approval Needed: no
+- [통합검증](../../feature-0046-native-client/docs/test-runs.d/20260910-transparent-icon-release.md).
+
+- main 통합 게이트가 과거 세션 재사용의 최종PASS→초기FAIL 역순 기록을 현재FAIL로 읽었다. feature-0043의 같은날 보완 실측 근거를 대조하고 해당 Run을 시간순/동일Scenario로 정합했다. 새 실측을 주장하지 않는다.

@@ -34,3 +34,18 @@ DQA 1.3.0은 현재 앱과 AI 연결을 유지한 채 새 버전을 설치하고
 - 후속커밋은출하문서/증적/파일모드만변경하며 배포된제품코드·바이너리는동일하다.
 - 정책 SHA-256: `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2` (worktree 및 main 동일).
 - 이전 기록: [report history](report-history/20260909-before-nondisruptive-update.md).
+
+## TASK-20260910-transparent-icon-release
+
+사용자 요청: 전진한 버전을 반영하여 투명 아이콘을 배포까지 완료한다. 이전 SVG 승인과 마상 브랜드 방향을 유지한다.
+
+- 현재 main/공개 채널 1.3.0을 통합하고 1.3.1을 준비한다. 슬롯 설치와 실행 중 연결 유지, 텍스트 선택·검색 등 최신 기능을 보존한다.
+- 안정 실행기·ICO 경로를 창 재실행 속성/바로가기/프로토콜/제거 표시에 사용하고 기존 실행기의 PE 아이콘도 무중단 교체한다.
+- 정책 SHA-256: a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2. 위험도 Minor, 사용자 배포 명시 승인.
+- 이전 아이콘 작업/잠금 화면으로 시각 검수 보류한 증적: [20260910-before-icon-release.md](report-history/20260910-before-icon-release.md). 1.1.3 후보는 게시하지 않는다.
+
+## 2026-09-10 — 투명 아이콘 1.3.1 검증
+
+Environment: DQA-client
+Result: PASS
+Scenario: 실제 Windows동결본/격리설치본의 아이콘·업데이트·실패보존·바로가기·제거. native624/웹30/노트34도PASS. 실제사용자계정/유료AI는검증대상이아니다. [정본](test-runs.d/20260910-transparent-icon-release.md). PR1617병합·채널/웹배포는다음단계다.

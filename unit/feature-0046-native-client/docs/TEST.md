@@ -143,3 +143,9 @@ Evidence: [실행 원장](test-runs.d/20260908T123400-connect-discovery.md), fea
 - 상세: [원장](test-runs.d/20260909-nondisruptive-update.md).
 - Environment: CLI — native617 passed /1 skipped; focused112 passed.
 - Environment: DQA-client — 격리 실제 설치본의 Windows 검증, 제어된 페이지·러너. 세부 결과는 원장을 따른다.
+
+## 2026-09-10 — 투명 아이콘 1.3.1 검증
+
+Environment: DQA-client
+Result: PASS
+Scenario: 실제 Windows동결본/격리설치본의 아이콘·업데이트·실패보존·바로가기·제거. native624/웹30/노트34도PASS. 실제사용자계정/유료AI는검증대상이아니다. [정본](test-runs.d/20260910-transparent-icon-release.md). PR1617병합·채널/웹배포는다음단계다.

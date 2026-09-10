@@ -5150,3 +5150,11 @@ DQA 첨부의 계보 내·계보 간 비교에서 SQL의 들여쓰기, 토큰 �
 - AC-DS-5: 정렬 예산 생략 여부는 빌더에서 끝나지 않고 실제 `/diff` 응답의 `truncated.alignment`로 전달되며, 원문 양쪽은 유지된다. API fake 회귀와 WebView2 안내 fixture가 각각 전달·표시 경계를 검증한다.
 
 REQ-20260909-session-continuity 연결 계약 보완: claim의 최상위 `conversation_id`도 필수 전달값이다. 하위 `conversation_session`만 있어도 러너는 대화를 결속할 수 없다. 서버 전체 응답을 러너에 그대로 전달하는 회귀가 이 경계를 검사한다.
+
+## REQ-20260908T-transparent-taskbar — 투명 아이콘과 Windows 식별자
+
+index/admin/share/ai-connect/oauth-callback/oauth-consent의 favicon은 같은 투명 DQA SVG/ICO를 쓴다. export_icon.py가 native 정본에서 web static/brand를 함께 재생성한다. 브라우저 프로필과 로그인 동선·화면 테마는 유지한다.
+
+- AC-TI-1: 정본 SVG와 PNG/ICO는 실제 투명 배경이며 ICO 9개 크기에서 외곽 alpha=0이다.
+- AC-TI-2: Window.Icon 검사와 실제 작업 표시줄 검사를 구분하고 적용되는 앱 식별자·아이콘/재실행 속성·바로가기를 Windows에서 대조한다.
+- AC-TI-3: 이전 1.1.2의 Python 작업 표시줄 아이콘을 재현하고 수정본의 투명 DQA 아이콘을 확인한다. 새 설치기와 웹 favicon이 기존 채널에서 제공된다.

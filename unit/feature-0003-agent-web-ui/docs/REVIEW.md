@@ -8682,3 +8682,48 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - **미검증 정직 표기**: 자동 갱신 실측 시 화면이 비어 있었다 · 표/비교 정렬은 사용자 계정 실제 첨부로의 확인 미완 · 지금 열려 있는 화면은 자동 갱신 코드가 없어 한 번은 직접 새로고침이 필요하다 — 항목 detail 과 **접힌 summary 양쪽**에 명시했다.
 - **캐시버스터**: 수기 bump 하지 않았다 — 소스 `?v=dev` 고정 + 빌드 주입 + 배포 ABORT 가드 계약(`docs/CONVENTIONS.md` §14.1 「수기 bump 금지」). 수기 실값은 그 안전장치를 무력화한다. 오케스트레이터 지시문의 bump 요구는 이 계약에 비추어 stale 이다.
 - Human Approval Needed: **아니오**.
+
+
+## REV-20260908T034000-transparent-design [SUBAGENT:icon_design_review] — PASS
+- Related TASK: TASK-20260908T-transparent-taskbar / feature-0046-native-client / feature-0003-agent-web-ui
+- Trigger: UI/아이콘·설치·웹 진입점 디자인
+- Timestamp: 2026-09-08T03:37:54+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T-transparent-design.md
+- Findings: P1/P2/P3 0. 실제 알파·소형 가독성·웹 자산 동일성·제작기록 정합 확인.
+- Human Approval Needed: no
+
+## REV-20260908T035000-transparent-ux [SUBAGENT:icon_ux_review] — CONCERN
+- Related TASK: TASK-20260908T-transparent-taskbar
+- Trigger: UI/창·작업 표시줄·아이콘
+- Timestamp: 2026-09-08T03:50:00Z
+- Verdict: CONCERN — 코드 P1/P2/P3 0, Windows 잠금 해제 후 최종 frozen 시각 확인 잔여
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T-transparent-ux.md
+- Human Approval Needed: no
+
+## REV-20260908T035400-transparent-merge-evidence [SKIPPED:non-policy-doc]
+- Related TASK: TASK-20260908T-transparent-taskbar
+- Reason: main의 현재 검증 정책과 타 세션 변경을 보존한 문서 병합·회귀 결과 보충. native 제품 코드 변화 0, 정책을 재작성하지 않았다. 고정 양 부모의 삭제/제목 유실 0.
+- Timestamp: 2026-09-08T03:55:39Z
+
+## REV-20260908T035401-transparent-inner-logo [SUBAGENT:icon_design_review] — PASS
+- Related TASK: TASK-20260908T-transparent-taskbar
+- Trigger: UI/로그인·사이드바·빈 대화 로고
+- Verdict: PASS
+- Findings: P1/P2/P3 0. 4개 이미지의 22/36/40px 크기·배치 유지, 실제 Windows 로그인 렌더의 투명 심볼 확인. Taskbar 잠금 해제 후 검수는 별도이다.
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T-transparent-design.md
+- Human Approval Needed: no
+
+## REV-20260908T035530-transparent-handoff [SKIPPED:non-policy-doc]
+- Related TASK: TASK-20260908T-transparent-taskbar
+- Reason: draft PR/검증 파일/대기 사유/프로세스 정리의 실제 결과 기록. 제품 코드·정책·디자인 변경 없음.
+- Timestamp: 2026-09-08T03:55:39Z
+
+## 20260910-transparent-icon-release
+
+- Related TASK: TASK-20260910-transparent-icon-release
+- Timestamp: 2026-09-10T11:11:47+09:00
+- 클라이언트1.3.1과같은투명SVG/ICO를6favicon/4로고에적용하고릴리스노트를추가. 웹30/노트34PASS, 디자인독립검토PASS. 배포후실제DQA로그인로고확인예정.
+- Verdict: PASS
+- Human Approval Needed: no
+- [통합검증](../../feature-0046-native-client/docs/test-runs.d/20260910-transparent-icon-release.md).

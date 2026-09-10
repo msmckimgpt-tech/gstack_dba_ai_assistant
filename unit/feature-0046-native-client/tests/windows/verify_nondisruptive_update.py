@@ -74,6 +74,8 @@ def main():
     parser.add_argument("--key", type=Path, required=True)
     parser.add_argument("--spki", required=True)
     parser.add_argument("--legacy-dir", type=Path)
+    parser.add_argument("--expected-icon", type=Path)
+    parser.add_argument("--invalid-slot-setup", type=Path)
     args = parser.parse_args()
     root = args.root.resolve()
     assert "dqa-nondisruptive" in str(root).lower() and not root.exists()
@@ -176,7 +178,8 @@ fetch('/ui-tick',{method:'POST',body:JSON.stringify({instance,n,hadCookie,draft:
 
     def setup(file):
         return subprocess.run([str(file), "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
-            "/NOCLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS", "/NOICONS", "/TASKS=",
+            "/NOCLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS",
+            *( ["/TASKS=desktopicon,startup"] if args.expected_icon else ["/NOICONS", "/TASKS="] ),
             f"/DIR={install}", f"/LOG={root / (file.stem + '.log')}"], timeout=120).returncode
 
     try:
@@ -237,6 +240,29 @@ fetch('/ui-tick',{method:'POST',body:JSON.stringify({instance,n,hadCookie,draft:
         bridge_before = state["bridge"]
         page_before = state["ticks"][-1]
         loads_before = state["page_loads"]
+        if args.invalid_slot_setup:
+            assert setup(args.invalid_slot_setup) != 0
+            assert (install / "active-slot.txt").read_text().strip() == first_slot
+            assert app.poll() is None
+            assert read_json(home / "fixture-progress.json")["pid"] == before["pid"]
+            record("failed payload verification cannot activate a new slot")
+        if args.expected_icon:
+            kernel = ctypes.windll.kernel32
+            kernel.CreateFileW.restype = wintypes.HANDLE
+            launcher_path = install / "DQALauncher.exe"
+            previous_launcher = launcher_path.read_bytes()
+            locked = kernel.CreateFileW(str(launcher_path), 0x80000000, 1, None, 3, 0, None)
+            assert locked != wintypes.HANDLE(-1).value
+            try:
+                assert setup(args.second) != 0
+                assert (install / "active-slot.txt").read_text().strip() == first_slot
+                assert launcher_path.read_bytes() == previous_launcher
+                assert not (install / "DQALauncher.pending.exe").exists()
+                assert app.poll() is None
+                assert read_json(home / "fixture-progress.json")["pid"] == before["pid"]
+                record("locked launcher aborts update with original pointer and running processes intact")
+            finally:
+                kernel.CloseHandle(wintypes.HANDLE(locked))
         result_box = []
         checked = bridge("update_check")
         assert checked.get("available") and checked["available"]["version"] == target, checked
@@ -264,6 +290,14 @@ fetch('/ui-tick',{method:'POST',body:JSON.stringify({instance,n,hadCookie,draft:
         record("in-app update keeps window connection draft and owned runner", app_pid=app.pid,
             runner_pid=after["pid"], progress_before=before["n"], progress_after=after["n"],
             page_loads=loads_before, next_slot=second_slot, result=result)
+        if args.expected_icon:
+            from verify_brand_icon import ico_frames, pe_icons
+            frames = ico_frames(args.expected_icon)
+            assert (install / "dqa.ico").read_bytes() == args.expected_icon.read_bytes()
+            assert (install / "DQALauncher.exe").read_bytes() != previous_launcher
+            resources = [pe_icons(install / name, frames) for name in ("DQALauncher.exe", "DQAConnect.exe")]
+            resources.append(pe_icons(install / "versions" / second_slot / "DQAConnect.exe", frames))
+            record("upgrade refreshes both launcher executable icons and stable transparent icon", resources=resources)
         kernel = ctypes.windll.kernel32
         kernel.CreateFileW.restype = wintypes.HANDLE
         kernel.CreateMutexW.restype = wintypes.HANDLE
@@ -333,6 +367,30 @@ fetch('/ui-tick',{method:'POST',body:JSON.stringify({instance,n,hadCookie,draft:
         assert state["ticks"][-1]["hadCookie"]
         record("old root executable path launches the new version with its existing browser cookie",
                version=target, same_profile=True)
+        if args.expected_icon:
+            from verify_taskbar_identity import read_window_properties, capture_taskbar
+            def branded_window():
+                # Class suffixes vary across .NET runs; enumerate by owned PID instead.
+                found = []
+                callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+                def each(hwnd, _):
+                    owner = wintypes.DWORD()
+                    ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+                    if owner.value == extra_pid and ctypes.windll.user32.IsWindowVisible(wintypes.HWND(hwnd)):
+                        props = read_window_properties(hwnd)
+                        if props["5"]["value"] == "Masangsoft.DQA.Connect": found.append((hwnd, props))
+                    return True
+                ctypes.windll.user32.EnumWindows(callback_type(each), 0)
+                return found
+            hwnd, props = wait_for(branded_window)[0]
+            assert props["2"]["value"] == subprocess.list2cmdline([str(install / "DQALauncher.exe")])
+            assert props["3"]["value"] == str(install / "dqa.ico") + ",0"
+            record("installed window uses stable relaunch and icon properties", properties=props)
+            try:
+                captured = capture_taskbar(root / "taskbar")
+                record("taskbar screenshot captured for visual review", taskbar=captured)
+            except Exception as exc:
+                record("taskbar visual inspection unavailable", result="NOT-RUN", reason=str(exc))
         report["verdict"] = "PASS"
     except Exception as exc:
         report["verdict"] = "FAIL"

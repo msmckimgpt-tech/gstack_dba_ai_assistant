@@ -1173,6 +1173,40 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Related TASK: feature-0046-native-client / TASK-20260908-brand-icon
 - Reason: 완료된 #1608 및 기존 채널의 실제 1.1.2 다운로드 결과를 문서에 기록한다. 정책·제품 코드·디자인 변경 없음. manifest 값뿐 아니라 실제 다운로드의 크기·SHA-256·전체 바이트를 Windows 검증본과 대조했다.
 - Timestamp: 2026-09-08T02:47:00Z
+## REV-20260908T034000-transparent-design [SUBAGENT:icon_design_review] — PASS
+- Related TASK: TASK-20260908T-transparent-taskbar / feature-0046-native-client / feature-0003-agent-web-ui
+- Trigger: UI/아이콘·설치·웹 진입점 디자인
+- Timestamp: 2026-09-08T03:37:54+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T-transparent-design.md
+- Findings: P1/P2/P3 0. 실제 알파·소형 가독성·웹 자산 동일성·제작기록 정합 확인.
+- Human Approval Needed: no
+
+## REV-20260908T035000-transparent-ux [SUBAGENT:icon_ux_review] — CONCERN
+- Related TASK: TASK-20260908T-transparent-taskbar
+- Trigger: UI/창·작업 표시줄·아이콘
+- Timestamp: 2026-09-08T03:50:00Z
+- Verdict: CONCERN — 코드 P1/P2/P3 0, Windows 잠금 해제 후 최종 frozen 시각 확인 잔여
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T-transparent-ux.md
+- Human Approval Needed: no
+
+## REV-20260908T035400-transparent-merge-evidence [SKIPPED:non-policy-doc]
+- Related TASK: TASK-20260908T-transparent-taskbar
+- Reason: main의 현재 검증 정책과 타 세션 변경을 보존한 문서 병합·회귀 결과 보충. native 제품 코드 변화 0, 정책을 재작성하지 않았다. 고정 양 부모의 삭제/제목 유실 0.
+- Timestamp: 2026-09-08T03:55:39Z
+
+## REV-20260908T035401-transparent-inner-logo [SUBAGENT:icon_design_review] — PASS
+- Related TASK: TASK-20260908T-transparent-taskbar
+- Trigger: UI/로그인·사이드바·빈 대화 로고
+- Verdict: PASS
+- Findings: P1/P2/P3 0. 4개 이미지의 22/36/40px 크기·배치 유지, 실제 Windows 로그인 렌더의 투명 심볼 확인. Taskbar 잠금 해제 후 검수는 별도이다.
+- Artifact: unit/feature-0046-native-client/docs/reviews/20260908T-transparent-design.md
+- Human Approval Needed: no
+
+## REV-20260908T035530-transparent-handoff [SKIPPED:non-policy-doc]
+- Related TASK: TASK-20260908T-transparent-taskbar
+- Reason: draft PR/검증 파일/대기 사유/프로세스 정리의 실제 결과 기록. 제품 코드·정책·디자인 변경 없음.
+- Timestamp: 2026-09-08T03:55:39Z
 ## REV-20260908T123400-connect-discovery-backend [SUBAGENT:backend] — PASS
 - Related TASK: feature-0046-native-client / TASK-20260908T120000-connect-discovery-ux
 - Trigger: API/성능/캐싱 keyword matched
@@ -1380,3 +1414,19 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Verdict: PASS
 - Reason: PR1663에서 독립 검토를 끝낸 동일제품의 출하 증적만 추가한다. 실제채널/다운로드해시·웹반영·상태문서·테스트생성JSON의실행권한정규화이며 런타임코드/설치기/공개파일바이트 변경은0이다. 문서추가용독립코드리뷰를반복하지않으며 실제AI대화/핀/다중세션미검증은유지한다.
 - Human Approval Needed: no
+
+## 2026-09-10 — transparent-icon-release [PASS]
+- Related TASK: TASK-20260910-transparent-icon-release
+- Timestamp: 2026-09-10T11:11:47+09:00
+- Verdict: PASS
+- Human Approval Needed: no
+- Trigger: UI/아이콘·설치수명. 독립 UX/QA 및 design 검토, 수정 후 재확인.
+- [상세](reviews/20260910-transparent-release.md), [Windows실측](test-runs.d/20260910-transparent-icon-release.md).
+
+## REV-20260910T111451-transparent-icon-final [SUBAGENT:icon_release_review,icon_final_design]
+- Related TASK: TASK-20260910-transparent-icon-release
+- Timestamp: 2026-09-10T11:14:51+09:00
+- Verdict: PASS
+- Human Approval Needed: no
+- 마지막 독립 확인에서 P1/P2 0. 실제 Windows 실패보존·설치·제거·작업표시줄 및 디자인 증적을 검토했다. 수동 설치 실패 완료화면 픽셀 미검증은 원장에 명시했고 차단 결함으로 판정하지 않았다.
+- [리뷰](reviews/20260910-transparent-release.md), [실측](test-runs.d/20260910-transparent-icon-release.md).

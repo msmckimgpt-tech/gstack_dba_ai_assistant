@@ -13630,6 +13630,22 @@ Task-Cycle: feature-0003-agent-web-ui
 
 - [x] 실제 사용자는 DQA 클라이언트만 실행한다. 별도 러너 실행·터미널 명령을 요구하지 않는다. 사용자 조치는 앱 안에서 업데이트 확인·설치·연결이며, 러너의 기동·자기갱신·실패 복구·종료는 클라이언트 책임이다. 직접 exec 검사는 개발자의 하위 호환 검증이고 사용자 사용 절차가 아니다.
 
+## TASK-20260908T-transparent-taskbar — 공통 서비스 아이콘
+
+### 2.1 Implementation Plan
+- 사용자 요청: 클라이언트 아이콘의 다른 미완료 부분도 검수·적용. 브라우저 폴백도 서비스 표면이므로 favicon 부재를 보완한다.
+- Minor: static HTML 6개에 동일 SVG/ICO 링크 추가. 정본은 feature-0046의 투명 SVG이며 export가 양 소비처를 동기화한다. 웹 색상·인증·기본 브라우저 프로필은 변경하지 않는다.
+- 검증: 아이콘 파일 byte 동일, 모든 HTML 아이콘 URL, 기존 캐시/스탬프 회귀, Windows 브라우저 표면, 배포 후 실제 아이콘 다운로드.
+- [x] 동일 투명 아이콘 연결과 정본 동기화
+- [x] 회귀·디자인/UX 검수·Windows 실측
+- [ ] 병합·web 롤링 배포·라이브 확인
+- 정본 TASK/증적: feature-0046-native-client/docs/TASK.md 및 test-runs.d/20260908T-transparent-taskbar.md.
+
+- 추가 로고 검수: 로그인·사이드바·빈 대화·관리 사이드바 4개 이미지도 구형 파란 로고를 참조했다. 같은 투명 SVG와 자산 스탬프로 교체하며 크기·화면 테마는 유지한다.
+
+- [x] 검수 하네스의 잠금 화면 오판을 재현하고 가림/단색 캡처를 거부하도록 보완
+- [ ] Windows 잠금 해제 후 최종 동결본 taskbar·브라우저 탭 시각 확인
+
 
 ### TASK-20260908T020000-delegation-friction — 교차 검증 보완
 
@@ -14001,3 +14017,26 @@ cross-feature (docs 홈 = 파일 소유 feature 인 feature-0003; agent-core 측
 - [x] 같은 블록 안 self-add 항목의 정본 이탈 2건 정정: summary 의 「최신 = 1.2.5」 ↔ item 의 1.3.0 자기모순 해소, 1.3.0 항목에 정본이 명시한 경계(창 닫기는 적용 시점 아님 · 설치 누적 시 디스크 증가) 보강.
 - [x] 사용자향 평이화(내부 명칭·구현 비노출) 기계 스캔 0히트 · 미검증 사항을 항목 detail 과 접힌 summary 양쪽에 명시.
 - [x] `node --check` + 전용 하네스 `tests/verify_release_notes.mjs` baseline(34/0) 유지 확인.
+
+## TASK-20260908T-transparent-taskbar — main 정합 및 검증 경계
+
+- [x] main a92c9256의 정책·DQA 주 사용 검증·회귀 테스트 변경을 병합하고 양 부모 보존 대조
+- [x] 병합 후 네이티브 전체 536건·웹 30건 PASS
+- [x] 4개 내부 로고 변경과 Windows 브라우저 실제 로그인 렌더 확인, 독립 디자인 재검토 PASS
+- [ ] Windows 잠금 해제 후 최종 동결본 작업 표시줄과 앱 로고 시각 재검수
+- [ ] 최종 검수 후 PR ready/병합·1.1.3 설치기 채널 및 웹 배포·라이브 대조
+- 정책 재독: 현재 worktree `AGENTS.md` SHA-256 a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2. 초기 024a8b53…에서 변경되어 §10.1·15.4.1·16.3·16.4·16.5.1·PB-0009를 갱신 반영했다. Windows-browser 호환과 DQA-client 실제 검증을 구분한다.
+
+- [x] 검수 대기 결과를 draft PR #1617에 보관하고 실행 중인 검사 프로세스·별도 Chrome/relay 정리
+- PR: https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant/pull/1617 (draft). Windows 잠금 해제 응답 대기이며 릴리스 채널은 아직 1.1.2다.
+
+## 20260910-transparent-icon-release
+
+- Related TASK: TASK-20260910-transparent-icon-release
+- Timestamp: 2026-09-10T11:11:47+09:00
+- 클라이언트1.3.1과같은투명SVG/ICO를6favicon/4로고에적용하고릴리스노트를추가. 웹30/노트34PASS, 디자인독립검토PASS. 배포후실제DQA로그인로고확인예정.
+- Verdict: PASS
+- Human Approval Needed: no
+- [통합검증](../../feature-0046-native-client/docs/test-runs.d/20260910-transparent-icon-release.md).
+- [x] 최신main통합·1.3.1노트·정적자산회귀검사
+- [ ] 웹배포와실제DQA로그인화면확인

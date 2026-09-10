@@ -43,6 +43,7 @@ import os
 import threading
 from typing import Callable
 
+from . import branding
 from .branding import ICON_PATH
 
 #: WebView2 런타임이 설치되는 자리. Edge 를 깐 Win10·기본 Win11 에는 있다.
@@ -101,6 +102,7 @@ class Shell:
         self.title = title
         self.storage = storage
         self._window = None
+        self._brand_hwnd: int | None = None
         #: 닫기를 **숨김으로** 바꿔도 되는가를 **닫는 순간 묻는다**. 기본값은 「안 된다」 —
         #: 모르면 숨기지 않는다(모르는 채 숨기는 쪽의 실패가 훨씬 나쁘다, §P0-R).
         self.can_hide: Callable[[], bool] = lambda: False
@@ -117,6 +119,7 @@ class Shell:
     # ── 수명 ──────────────────────────────────────────────────────────────────
     def run(self) -> bool:
         """창을 띄우고 **닫힐 때까지 돌아오지 않는다.** 못 띄웠으면 `False`."""
+        branding.initialize_process()
         try:
             import webview
         except Exception:  # noqa: BLE001
@@ -127,13 +130,26 @@ class Shell:
                 min_size=(900, 600), confirm_close=False, text_select=True)
             self._window.events.closing += self._on_closing
             self._window.events.loaded += self._on_loaded
+            self._window.events.before_show += self._brand_window
             os.makedirs(self.storage, exist_ok=True)
             webview.start(gui="edgechromium", private_mode=False,
                           storage_path=self.storage, icon=str(ICON_PATH))
             return True
         except Exception:  # noqa: BLE001 — 못 띄우면 호출부가 폴백한다
+            self._release_branding()
             self._window = None
             return False
+
+    def _brand_window(self) -> None:
+        if os.name == "nt" and self._window is not None:
+            self._brand_hwnd = int(self._window.native.Handle.ToInt64())
+            branding.configure_window(self._brand_hwnd)
+
+    def _release_branding(self) -> bool:
+        if self._brand_hwnd is not None:
+            branding.clear_window(self._brand_hwnd)
+            self._brand_hwnd = None
+        return True
 
     def _on_loaded(self) -> None:
         """pywebview가 끈 기본 검색을 WebView2 소유 UI 스레드에서 복구한다."""
@@ -162,18 +178,18 @@ class Shell:
         숨기지 않는다」를 어기는 것이고, 그 실패가 정확히 이 껍데기가 막으려던 상태다.
         """
         if self._quitting:
-            return True
+            return self._release_branding()
         try:
             if not self.can_hide():
-                return True
+                return self._release_branding()
         except Exception as exc:  # noqa: BLE001 — 판정 불가 = 숨기지 않는다
             self.last_error = f"can_hide: {exc!r}"
-            return True
+            return self._release_branding()
         try:
             self._window.hide()
         except Exception as exc:  # noqa: BLE001 — 숨기지 못하면 닫히는 편이 낫다
             self.last_error = f"hide: {exc!r}"
-            return True
+            return self._release_branding()
         # ⚠ 숨김이 **성립한 뒤에만** 알린다. 실패 경로에서 알리면 「알림 영역에 있습니다」를
         #   말해 놓고 창이 닫혀 프로그램이 끝나는, 화면이 거짓을 말하는 형태가 된다(§P0-R).
         if self.on_hidden is not None:

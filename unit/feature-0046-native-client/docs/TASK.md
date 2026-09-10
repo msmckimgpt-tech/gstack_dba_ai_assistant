@@ -52,3 +52,18 @@ feature_status_date: 2026-09-09
 - 이전 상태: [task-history](task-history/20260909-before-nondisruptive-update.md)
 - 현재 앱 계속 사용·다음 실행 적용을 합리적 기본값으로 고지. 사용자의 추가 선택이 도착하면 반영.
 - 외부 근거: https://jrsoftware.org/ishelp/topic_setup_closeapplications.htm (force는 미저장 작업을 잃게 할 수 있음), https://jrsoftware.org/ishelp/topic_installorder.htm (files→icons→registry→uninstall log→run), https://jrsoftware.org/ishelp/topic_setup_setupmutex.htm (설치 동시 실행 배제).
+
+## TASK-20260910-transparent-icon-release
+
+사용자 요청: 전진한 버전을 반영하여 투명 아이콘을 배포까지 완료한다. 이전 SVG 승인과 마상 브랜드 방향을 유지한다.
+
+- 현재 main/공개 채널 1.3.0을 통합하고 1.3.1을 준비한다. 슬롯 설치와 실행 중 연결 유지, 텍스트 선택·검색 등 최신 기능을 보존한다.
+- 안정 실행기·ICO 경로를 창 재실행 속성/바로가기/프로토콜/제거 표시에 사용하고 기존 실행기의 PE 아이콘도 무중단 교체한다.
+- 정책 SHA-256: a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2. 위험도 Minor, 사용자 배포 명시 승인.
+- 이전 아이콘 작업/잠금 화면으로 시각 검수 보류한 증적: [20260910-before-icon-release.md](task-history/20260910-before-icon-release.md). 1.1.3 후보는 게시하지 않는다.
+
+- [x] 최신 main 충돌 해소·안정 실행기 및 투명 자산 경로 정합
+- [x] 회귀·실제 Windows 신규/업그레이드 설치·작업 표시줄 검수·독립 리뷰
+- [ ] PR 병합·1.3.1 설치기 및 웹 배포·실제 다운로드/라이브 검증
+
+- [x] 통합 merge b63ffb75의 양 부모 보존과 독립 최종 리뷰 확인, normal commit으로 완료 게이트 증적 정합
