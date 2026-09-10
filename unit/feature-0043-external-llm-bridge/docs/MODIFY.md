@@ -4955,3 +4955,8 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 - `handler`는 명시 runtime/model 미지원 시 이전 AI를 호출하지 않으며, 생성되지 않은 답의 자가 검증도 호출하지 않는다.
 - 선택 파일 reader는 순환 의존성이 없는 `runtimes`로 이동했다. 패키지 import와 단일 배포 번들을 모두 검증한다.
 - 근거·결과: `test-runs.d/20260910-model-switch.md`.
+
+## CHG-20260910T172000-model-switch-acceptance
+
+- Timestamp: 2026-09-10T17:20:00+09:00; Session: codex-model-switch-20260910
+- PR #1678/main1c620a97 배포·설치본 자동 갱신 증거, 병행 릴리스931a543e 통합 회귀와 최신 해시 대조, 실제 DQA Opus → GPT-6-Astra 전환 및 합성 응답23.427초 PASS를 TASK/REPORT/Run에 기록한다. 제품 코드 변경 없음.

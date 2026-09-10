@@ -5280,3 +5280,9 @@ LLM 에게 자기소개를 시키던 축 전체가 이 한 줄로 대체됐다 �
 - Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260910T080000-model-switch-qa.md
 - Human Approval Needed: no
 - 승인 근거: 현재 사용자 수정 요청 및 wrapper FIRST_REQUEST deploy_scope included, AGENTS §16.5.1. 인증·인가 정책 및 데이터 변경 없음.
+
+## REV-20260910T172000-model-switch-acceptance [SKIPPED:non-policy-doc]
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260910-model-switch
+- Reason: 출하·설치본 실측 기록만 갱신하는 비정책 문서 변경. 코드 패널은 직전 backend/qa PASS를 유지한다.
+- Trigger: non-policy-doc/비정책 문서 — AGENTS §18.8 표 및 명시 SKIP trace.
+- Timestamp: 2026-09-10T17:20:00+09:00

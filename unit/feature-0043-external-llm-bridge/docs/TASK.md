@@ -30,7 +30,8 @@ feature_status_note: 모델 전환 시 이전 AI 실패 재사용 차단 및 선
 - AC4: 요청 runtime 미가용 시 이전 AI 실행 0회, 실패 안내 제출. 같은 runtime 모델 변경·세션 재개 인자 유지.
 - 검증: RED/GREEN 행위 회귀, backend/qa 독립 리뷰(최대3회/P1=0), verify-completion, 병합·web 배포·설치 DQA 비교 및 가능한 앱 사용자 흐름.
 - [x] 구현·집중 회귀·backend/qa 리뷰 — 신규15/집중124 PASS; 최종 전체1812 PASS/1 skipped/실패0, verify PASS
-- [ ] 병합·배포·DQA 검증 기록
+- [x] 병합·배포·설치본 확인 — PR #1678/main1c620a97, 배포 exit0/90초 soak PASS, 설치 runner 자동 갱신·heartbeat 복귀. 병행 릴리스931a543e의 서버/설치 runner도 해시 일치.
+- [x] 실제 DQA 모델 전환 후 합성 요청 응답 확인 — 1.5.0 PID34472, Opus → GPT-6-Astra, task t_BAAHNxS3izL9i7bw codex/gpt-6-astra/medium, 23.427초/delivered=true, 화면 SWITCH_OK_910 PASS.
 
 
 ## TASK-20260910-effort-contract — AI 실행 옵션 오류 수정
