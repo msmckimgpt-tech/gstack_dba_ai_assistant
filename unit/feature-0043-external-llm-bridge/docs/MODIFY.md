@@ -4935,3 +4935,9 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 ## CHG-20260909T130116-session-installed-acceptance
 
 제품 코드 변경 없이 보완 배포 및 설치 DQA 실제 재개 결과를 기록한다. 첫 결속·후속 재개 둘 다 완료, 동일 native ID 및 상태4→6, 합성 문자열 회상 UI PASS. 다계정 그룹 앱 왕복 NOT-RUN은 유지한다.
+
+## CHG-20260910T134000-effort-contract
+
+- TASK-20260910-effort-contract / FR-learned-cli-flag-overrides-adapter. 알려진 CLI의 모델·추론 플래그를 공통 어댑터로 결정하여 오염 캐시와 AI의 잘못된 옵션 설명이 실행 계약을 덮어쓰는 경로를 봉인했다. 캐시를 사용자가 지울 필요 없이 정제·probe·verify 및 실행 경계에서 치유한다.
+- 모델/등급 값 목록, 미등록 CLI의 학습 호출법, 누락 축 재협상, 권한/위치 선택 경계를 보존했다. 실패·빈 답변은 미적용 사실만 알리고 성공 대체응답에서만 “답했습니다”를 쓴다. 옵션 오류의 구버전 추정 및 터미널 재설치 안내를 제거했다.
+- 검증: 신규 15건 포함 집중 226 PASS; 초기 신규 11건을 이전 main 번들에 적용 시 9 FAIL/2 PASS로 결함 재현. 자세한 설치본·배포 증거는 test-runs.d/20260910-effort-contract.md.

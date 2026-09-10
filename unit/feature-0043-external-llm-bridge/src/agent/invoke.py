@@ -22,7 +22,7 @@ from .events import _EV_AI_FAIL, _EV_AI_SPAWN_FAIL, _EV_AI_TIMEOUT
 from .logs import _SECRET_PATTERNS, _log, _log_exc, log_event
 from .caps import schedule_health_recheck
 from .state import ai_blocked, note_ai_outcome
-from .runtimes import _APPEND_SYSTEM_FLAG, _KEEP_MCP, _RUNTIME_SPECS, _STRICT_MCP_FLAG
+from .runtimes import _APPEND_SYSTEM_FLAG, _KEEP_MCP, _RUNTIME_SPECS, _STRICT_MCP_FLAG, runtime_option_flag
 
 #: `ask_local_ai` 가 "사용자가 취소했다" 를 알리는 신호.
 #:
@@ -94,8 +94,7 @@ _FAILURE_HINTS: tuple[tuple[object, str], ...] = (
      "다시 질문해 주세요."),
     (re.compile(r"unknown option|unrecognized (option|argument)|"
                 r"invalid (option|argument)|unexpected argument", re.I),
-     "연결된 AI 가 이 호출의 옵션을 알지 못합니다(구버전일 수 있습니다). 그 CLI 를 업데이트하거나 "
-     "웹의 「연결 준비」로 러너를 최신 사본으로 다시 받아 실행해 주세요."),
+     "연결된 AI가 실행 옵션을 거부했습니다. DQA에서 AI 연결 상태를 확인한 뒤 다시 요청해 주세요."),
     (re.compile(r"command not found|no such file or directory|not recognized as", re.I),
      "연결된 AI 의 실행 파일을 찾지 못했습니다. 러너를 띄운 컴퓨터에 그 CLI 가 설치돼 있고 "
      "PATH 에서 보이는지 확인해 주세요."),
@@ -539,11 +538,10 @@ def build_cmd(runtime: str, prompt: str, model: str | None = None,
     argv = list(spec.get("argv") or (caps or {}).get("argv") or [])
     flags: list[str] = []
 
-    # 호출법(플래그 형태)의 출처 — **그 AI 가 스스로 답한 것**이 우선이고, 없으면 내장 표
-    # (P0-Z4). 이 값은 로컬 `config.json` 에서만 오고 서버를 거치지 않는다.
+    # 값 목록은 연결된 AI가 정하고, 알려진 CLI의 호출법은 어댑터가 정한다.
     local = caps or {}
-    model_flag = local.get("model") if local.get("model") is not None else spec.get("model")
-    effort_flag = local.get("effort") if local.get("effort") is not None else spec.get("effort")
+    model_flag = runtime_option_flag(runtime, "model", local)
+    effort_flag = runtime_option_flag(runtime, "effort", local)
 
     if runtimes is None:
         allowed_models = list(local.get("models") or spec.get("models") or [])

@@ -5238,3 +5238,19 @@ LLM 에게 자기소개를 시키던 축 전체가 이 한 줄로 대체됐다 �
 - Verdict: PASS (세션 누락 P1 해결, 설치 Codex 재개 확인)
 - Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260909T130116-session-installed-qa.md
 - Human Approval Needed: no
+
+## REV-20260910T134300-effort-contract-backend [SUBAGENT:backend] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260910-effort-contract
+- Trigger: CLI contract/실행 계약; L6 모델 호출 adapter (conversation_audit Phase 12 backend+qa)
+- Timestamp: 2026-09-10T13:43:00+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260910-effort-contract-backend.md
+- Human Approval Needed: no — 사용자 명시 수정 범위 Minor; §16.5.1 출하 포함
+
+## REV-20260910T134300-effort-contract-qa [SUBAGENT:qa] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260910-effort-contract
+- Trigger: CLI contract/실행 계약; L6 모델 호출 adapter (conversation_audit Phase 12 backend+qa)
+- Timestamp: 2026-09-10T13:43:00+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260910-effort-contract-qa.md
+- Human Approval Needed: no — 사용자 명시 수정 범위 Minor; §16.5.1 출하 포함

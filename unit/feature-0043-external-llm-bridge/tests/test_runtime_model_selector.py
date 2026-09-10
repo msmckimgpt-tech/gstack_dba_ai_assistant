@@ -918,18 +918,16 @@ def test_unknown_cli_can_actually_be_invoked():
         "mycli", "-p", "--think", "deep", "Q"]
 
 
-def test_probed_flags_win_over_the_builtin_table():
-    """AI 가 답한 호출법이 내장 표를 **이긴다**.
-
-    실측에서 codex 는 `-m` 이 아니라 `--model` 을 답했다. 표가 이기면 그 답이 무의미해진다.
-    """
+def test_known_cli_uses_adapter_flags_with_probed_values():
+    """AI는 값 목록을 정하고 알려진 CLI의 인자 형식은 어댑터가 정한다."""
     mod = _load_runner()
     caps = {"models": [{"value": "gpt-5.6-sol"}], "efforts": [{"value": "ultra"}],
             "model": ["--model", "{model}"],
             "effort": ["-c", "model_reasoning_effort={effort}"]}
     report = [{"runtime": "codex", "models": caps["models"], "efforts": caps["efforts"]}]
     got = mod.build_cmd("codex", "Q", "gpt-5.6-sol", "ultra", report, caps)
-    assert "--model" in got and "-m" not in got, "내장 표의 플래그가 AI 응답을 덮었다"
+    assert "-m" in got and "--model" not in got
+    assert "gpt-5.6-sol" in got and "model_reasoning_effort=ultra" in got
 
 
 def test_probe_timeout_is_not_zero():

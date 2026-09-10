@@ -12,6 +12,27 @@ feature_status_note: 대화별 AI 세션 재사용과 그룹 assistant 문맥 �
 
 # Task
 
+## TASK-20260910-effort-contract — AI 실행 옵션 오류 수정
+
+### 2.1 Implementation Plan
+
+- 승인 근거: 현재 사용자의 CHZZK 쿼리 리뷰 대화 옵션 오류 수정 요청. Minor: CLI 인자와 실패 안내 정합, 인증/권한/데이터 변경 없음. deploy_scope included(AGENTS §16.5.1).
+- 진단: 대화 `20260910042529-bdc424bf` assistant 9283 및 설치 DQA 개별 runner 캐시·task.dispatch/ai.fail 로그 일치. 최근 14일 61개 대화 중 동일 오류 1건. 잘못된 positive capability가 캐시/실행으로 전달되는 구조결함 재현.
+- 소유 경로: `src/agent/{runtimes,caps,invoke,handler}.py`, 관련 테스트 및 기능 문서, friction ledger. main·다른 worktree 기존 편집 보존.
+- `runtime_option_flag`가 알려진 CLI 호출법을 통일한다. `sanitize_caps` 및 probe/verify는 오염 플래그를 치유하고 모델/등급 값 목록과 미등록 CLI 확장·누락 축 재질의는 유지한다.
+- `handle_one`은 실제 답변 생성 시에만 기본 설정으로 답했다고 알린다. 옵션 오류만으로 구버전을 추정하지 않는다.
+- AC-1: 캐시 `--reasoning-effort`/high → 실제 argv `--effort high`, 잘못된 옵션 0개. 정제를 거치지 않은 실행도 방어.
+- AC-2: Codex config override, 미등록 CLI, 누락 축 재질의, 미지원 축 제외 유지.
+- AC-3: 실패·빈 답변에는 “기본 설정으로 답했습니다”가 없고 성공 대체 응답에는 고지가 남는다.
+- 검증: RED/GREEN 회귀, backend/qa 패널, verify-completion, 병합·web 배포·설치본 비교. 실제 DQA 재요청은 수행 여부 별도 기록.
+- 격리: canonical feature 경로가 타인 브랜치라 cycle-init 중단, skill Phase 9 폴백으로 전용 worktree 생성. primary verify=feature-0043-external-llm-bridge.
+- 정책 SHA-256: 21286d42d52a987af6bed233fb5c050b429ddfa77d33b4979fea3acb4a17fdef.
+- [x] 구현·회귀 검증 — 집중226 PASS, Windows CLI 성공. 넓은 회귀의 기존 구조 테스트1 정합.
+- [x] backend/qa 패널 PASS
+- [x] 완료 게이트 — verify-completion pre-commit PASS
+- [ ] 병합·배포·설치본 확인
+
+
 ## TASK-20260909-session-continuity — 대화별 AI 세션 재사용과 그룹 문맥
 
 - [x] 설치 DQA에서 발견한 claim 응답의 최상위 conversation_id 누락 수정 — 전체 응답→실제 handler 회귀 수정 전 RED, 수정 후 관련 87 PASS.

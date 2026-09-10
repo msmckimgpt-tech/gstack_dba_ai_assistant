@@ -8,6 +8,17 @@ source_of_truth: true
 
 # Report
 
+## TASK-20260910-effort-contract — 옵션 오류 수정
+
+- 원인 확인: 요청 대화 assistant 9283, Windows DQA의 개별 runner 캐시(`source=verified`, `effort=--reasoning-effort`)와 실행 실패 로그가 일치했다. 공용 캐시는 정상 `--effort`여서 개별 캐시를 보지 않으면 원인을 놓친다. 실제 선택된 Windows Claude 2.1.70의 `--help`도 `--effort low/medium/high`를 제공했다.
+- 수정: known CLI 어댑터로 플래그 정규화·실행 방어, 신규/기존 캐시 치유, 성공과 실패의 미적용 고지 분리. 원 사용자 대화 데이터·설정 캐시를 직접 수정하지 않는다.
+- 검증: 집중 226 PASS, baseline RED 9건. 넓은 회귀·배포·설치본 확인은 실행 기록에서 각각 구분한다.
+- 원장: docs/improvements/conversation-audit/FRICTION_LEDGER.md FR-learned-cli-flag-overrides-adapter.
+
+### Git 동기화 결과
+- 전용 branch ai/codex/feature-0043-effort-contract-20260910. verify 후 commit/push/PR/finalize 및 web-only 배포 진행. 최종 merge hash/출하 결과는 PR과 종료 보고에 기록한다.
+
+
 ## TASK-20260909-session-continuity — 대화별 AI 세션과 그룹 문맥
 
 **최종: PR #1649·#1650 반영, 서버9cd10571 두 replica 배포·90초 soak PASS. 설치 DQA Codex 동일 대화 두 요청의 같은 native ID, resumed=false→true, 확정 이력4→6 및 실제 회상 응답 PASS.** 여러 계정의 그룹 앱 왕복은 NOT-RUN이고 그룹 문맥은 서버/프롬프트 회귀로 확인했다. 초기 전달 누락은 아래 이력이며 수정과 재검증을 마쳤다.
