@@ -1057,3 +1057,9 @@ edit_policy: append-only
 ## CHG-20260910T111451-icon-integration-record
 - Timestamp: 2026-09-10T11:14:51+09:00
 - merge commit combined diff에서 checkbox/CHG/review 항목을 읽지 못한 post-commit 검사에 대해 정상 후속 커밋으로 이번 cycle 완료 기록을 추가한다. 제품 bytes는 변경하지 않는다.
+
+## CHG-20260910T114000-icon-shipping-closeout
+- Timestamp: 2026-09-10T11:40:00+09:00
+- Related TASK: TASK-20260910-transparent-icon-release
+- 1.3.1 공개 및 public/localhost 다운로드, 실제 기본 DQA 로고/작업 표시줄, 웹 ready/soak 증적을 기록했다. 캡처 하네스는 기존 .NET Drawing, DPI 인식과 자기 창 가림 방지/원복을 사용한다. 사용자 설치/프로세스는 보존했다.
+- [출하 원장](test-runs.d/20260910-transparent-icon-release.md).

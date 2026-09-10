@@ -14023,20 +14023,22 @@ cross-feature (docs 홈 = 파일 소유 feature 인 feature-0003; agent-core 측
 - [x] main a92c9256의 정책·DQA 주 사용 검증·회귀 테스트 변경을 병합하고 양 부모 보존 대조
 - [x] 병합 후 네이티브 전체 536건·웹 30건 PASS
 - [x] 4개 내부 로고 변경과 Windows 브라우저 실제 로그인 렌더 확인, 독립 디자인 재검토 PASS
-- [ ] Windows 잠금 해제 후 최종 동결본 작업 표시줄과 앱 로고 시각 재검수
-- [ ] 최종 검수 후 PR ready/병합·1.1.3 설치기 채널 및 웹 배포·라이브 대조
+- [x] Windows 잠금 해제 후 최종 동결본 작업 표시줄과 앱 로고 시각 재검수 — 1.3.1에서 완료
+- [x] 최종 검수 후 PR ready/병합·설치기 채널 및 웹 배포·라이브 대조 — 전진한 버전을 반영하여 1.1.3 후보 대신 1.3.1 출하
 - 정책 재독: 현재 worktree `AGENTS.md` SHA-256 a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2. 초기 024a8b53…에서 변경되어 §10.1·15.4.1·16.3·16.4·16.5.1·PB-0009를 갱신 반영했다. Windows-browser 호환과 DQA-client 실제 검증을 구분한다.
 
 - [x] 검수 대기 결과를 draft PR #1617에 보관하고 실행 중인 검사 프로세스·별도 Chrome/relay 정리
-- PR: https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant/pull/1617 (draft). Windows 잠금 해제 응답 대기이며 릴리스 채널은 아직 1.1.2다.
+- PR: https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant/pull/1617 (merged). 2026-09-10 최신1.3.0 통합 후1.3.1 공개 및 실제 Windows 검수 완료.
 
 ## 20260910-transparent-icon-release
 
 - Related TASK: TASK-20260910-transparent-icon-release
 - Timestamp: 2026-09-10T11:11:47+09:00
-- 클라이언트1.3.1과같은투명SVG/ICO를6favicon/4로고에적용하고릴리스노트를추가. 웹30/노트34PASS, 디자인독립검토PASS. 배포후실제DQA로그인로고확인예정.
+- 클라이언트1.3.1과같은투명SVG/ICO를6favicon/4로고에적용하고릴리스노트를추가. 웹30/노트34PASS, 디자인독립검토PASS. 배포 후 실제 기본 DQA 로그인 로고 확인 PASS.
 - Verdict: PASS
 - Human Approval Needed: no
 - [통합검증](../../feature-0046-native-client/docs/test-runs.d/20260910-transparent-icon-release.md).
 - [x] 최신main통합·1.3.1노트·정적자산회귀검사
-- [ ] 웹배포와실제DQA로그인화면확인
+- [x] 웹배포와실제DQA로그인화면확인 (public/localhost 다운로드·실제 기본 DQA 화면 PASS)
+
+- [x] 1.3.1 공개·웹 배포·공인 주소 복구와 실제 DQA 최종 증적 정합

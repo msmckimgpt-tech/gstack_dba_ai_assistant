@@ -8727,3 +8727,11 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - Verdict: PASS
 - Human Approval Needed: no
 - [통합검증](../../feature-0046-native-client/docs/test-runs.d/20260910-transparent-icon-release.md).
+
+## REV-20260910T114000-icon-deployed [SKIPPED:non-policy-doc]
+- Related TASK: TASK-20260910-transparent-icon-release
+- Timestamp: 2026-09-10T11:40:00+09:00
+- Trigger: 비정책 출하 증적 정합. 웹 제품 추가 변경 없음.
+- Verdict: PASS
+- Human Approval Needed: no
+- public 기본 실제 DQA 로그인 로고/작업 표시줄과 다운로드 해시를 확인했다. [원장](test-runs.d/20260910-transparent-icon-release.md).

@@ -1,0 +1,11 @@
+installed app owns live runner
+failed payload verification cannot activate a new slot
+locked launcher aborts update with original pointer and running processes intact
+in-app update keeps window connection draft and owned runner
+upgrade refreshes both launcher executable icons and stable transparent icon
+persistent activation lock fails without disturbing the running app or pointer
+global setup mutex rejects a concurrent installer
+same-version reinstall retries a brief pointer lock and uses a fresh slot
+old root executable path launches the new version with its existing browser cookie
+installed window uses stable relaunch and icon properties
+taskbar screenshot captured for visual review

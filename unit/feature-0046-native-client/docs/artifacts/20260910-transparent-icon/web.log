@@ -1,0 +1,105 @@
+..............................                                           [100%]
+=============================== warnings summary ===============================
+unit/feature-0003-agent-web-ui/src/app.py:308
+  /root/download/docker/mysql_ai_delegated_dev/.worktrees/feature-0046-transparent-taskbar-icon/unit/feature-0003-agent-web-ui/src/app.py:308: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    _PROCESS_BOOT_UTC = datetime.utcnow().replace(microsecond=0)
+
+unit/feature-0003-agent-web-ui/src/app.py:363
+  /root/download/docker/mysql_ai_delegated_dev/.worktrees/feature-0046-transparent-taskbar-icon/unit/feature-0003-agent-web-ui/src/app.py:363: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("startup")
+
+../../../../../../usr/local/lib/python3.12/dist-packages/fastapi/applications.py:4598
+../../../../../../usr/local/lib/python3.12/dist-packages/fastapi/applications.py:4598
+../../../../../../usr/local/lib/python3.12/dist-packages/fastapi/applications.py:4598
+../../../../../../usr/local/lib/python3.12/dist-packages/fastapi/applications.py:4598
+../../../../../../usr/local/lib/python3.12/dist-packages/fastapi/applications.py:4598
+../../../../../../usr/local/lib/python3.12/dist-packages/fastapi/applications.py:4598
+../../../../../../usr/local/lib/python3.12/dist-packages/fastapi/applications.py:4598
+../../../../../../usr/local/lib/python3.12/dist-packages/fastapi/applications.py:4598
+../../../../../../usr/local/lib/python3.12/dist-packages/fastapi/applications.py:4598
+  /usr/local/lib/python3.12/dist-packages/fastapi/applications.py:4598: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    return self.router.on_event(event_type)  # ty: ignore[deprecated]
+
+unit/feature-0003-agent-web-ui/src/app.py:372
+  /root/download/docker/mysql_ai_delegated_dev/.worktrees/feature-0046-transparent-taskbar-icon/unit/feature-0003-agent-web-ui/src/app.py:372: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("startup")
+
+unit/feature-0003-agent-web-ui/src/app.py:385
+  /root/download/docker/mysql_ai_delegated_dev/.worktrees/feature-0046-transparent-taskbar-icon/unit/feature-0003-agent-web-ui/src/app.py:385: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("startup")
+
+unit/feature-0003-agent-web-ui/src/app.py:447
+  /root/download/docker/mysql_ai_delegated_dev/.worktrees/feature-0046-transparent-taskbar-icon/unit/feature-0003-agent-web-ui/src/app.py:447: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("startup")
+
+unit/feature-0003-agent-web-ui/src/app.py:461
+  /root/download/docker/mysql_ai_delegated_dev/.worktrees/feature-0046-transparent-taskbar-icon/unit/feature-0003-agent-web-ui/src/app.py:461: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("startup")
+
+unit/feature-0003-agent-web-ui/src/app.py:490
+  /root/download/docker/mysql_ai_delegated_dev/.worktrees/feature-0046-transparent-taskbar-icon/unit/feature-0003-agent-web-ui/src/app.py:490: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("startup")
+
+unit/feature-0003-agent-web-ui/src/app.py:550
+  /root/download/docker/mysql_ai_delegated_dev/.worktrees/feature-0046-transparent-taskbar-icon/unit/feature-0003-agent-web-ui/src/app.py:550: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("shutdown")
+
+unit/feature-0003-agent-web-ui/src/app.py:559
+  /root/download/docker/mysql_ai_delegated_dev/.worktrees/feature-0046-transparent-taskbar-icon/unit/feature-0003-agent-web-ui/src/app.py:559: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("shutdown")
+
+unit/feature-0003-agent-web-ui/src/app.py:2619
+  /root/download/docker/mysql_ai_delegated_dev/.worktrees/feature-0046-transparent-taskbar-icon/unit/feature-0003-agent-web-ui/src/app.py:2619: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("startup")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html

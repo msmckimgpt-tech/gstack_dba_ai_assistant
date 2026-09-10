@@ -1,0 +1,32 @@
+[
+  {
+    "base": "https://112.185.196.20",
+    "manifest": {
+      "version": "1.3.1",
+      "filename": "DQAConnect-Setup-1.3.1.exe",
+      "sha256": "1e4d7fa471ff7825d67e30f7a127d90b39218d1986e27ab2ded5f4b9121b9a4e",
+      "size": 25945487,
+      "published_at": "2026-09-10T02:16:25+00:00",
+      "notes": "투명 DQA 아이콘을 앱·설치 파일·바로가기에 통일하고 작업 표시줄의 Python 아이콘을 수정했습니다. 현재 앱과 AI 연결을 유지하며 설치하고, 작업을 마친 뒤 DQA를 정상 종료했다가 다시 실행하면 적용됩니다.",
+      "path": "/client/DQAConnect-Setup-1.3.1.exe"
+    },
+    "download_sha256": "1e4d7fa471ff7825d67e30f7a127d90b39218d1986e27ab2ded5f4b9121b9a4e",
+    "result": "PASS",
+    "tls": "project-rootCA-verified"
+  },
+  {
+    "base": "https://localhost",
+    "manifest": {
+      "version": "1.3.1",
+      "filename": "DQAConnect-Setup-1.3.1.exe",
+      "sha256": "1e4d7fa471ff7825d67e30f7a127d90b39218d1986e27ab2ded5f4b9121b9a4e",
+      "size": 25945487,
+      "published_at": "2026-09-10T02:16:25+00:00",
+      "notes": "투명 DQA 아이콘을 앱·설치 파일·바로가기에 통일하고 작업 표시줄의 Python 아이콘을 수정했습니다. 현재 앱과 AI 연결을 유지하며 설치하고, 작업을 마친 뒤 DQA를 정상 종료했다가 다시 실행하면 적용됩니다.",
+      "path": "/client/DQAConnect-Setup-1.3.1.exe"
+    },
+    "download_sha256": "1e4d7fa471ff7825d67e30f7a127d90b39218d1986e27ab2ded5f4b9121b9a4e",
+    "result": "PASS",
+    "tls": "project-rootCA-verified"
+  }
+]

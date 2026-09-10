@@ -1430,3 +1430,12 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Human Approval Needed: no
 - 마지막 독립 확인에서 P1/P2 0. 실제 Windows 실패보존·설치·제거·작업표시줄 및 디자인 증적을 검토했다. 수동 설치 실패 완료화면 픽셀 미검증은 원장에 명시했고 차단 결함으로 판정하지 않았다.
 - [리뷰](reviews/20260910-transparent-release.md), [실측](test-runs.d/20260910-transparent-icon-release.md).
+
+## REV-20260910T114000-icon-shipping [SUBAGENT:icon_release_review]
+- Related TASK: TASK-20260910-transparent-icon-release
+- Timestamp: 2026-09-10T11:40:00+09:00
+- Trigger: QA/검증 하네스의 실제 Windows 캡처와 종료 계약.
+- Verdict: PASS
+- Human Approval Needed: no
+- 추가 P1/P2 0. SetWindowPos의 초기 argtypes, 생성한 probe PID로 창/종료 대상 제한, 성공/실패 경로 최상위 해제·종료를 확인했다. 기본 공인 주소 실행의 taskbar capture 및 graceful_exit=true 증적 확인. 제품 설치/작업 표시줄 디자인 검토는 앞 독립 2인 승인본과 동일하다.
+- [최종 출하 증적](test-runs.d/20260910-transparent-icon-release.md).

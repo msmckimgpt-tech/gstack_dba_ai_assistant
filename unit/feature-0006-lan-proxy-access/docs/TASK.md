@@ -268,3 +268,17 @@ AskUserQuestion 으로 모범적인 대안을 검토하여 제안까지 진행�
 - [x] 루트 compose/Makefile 경로가 반영되었다
 - [x] 문서가 현재 구조를 설명한다
 - [ ] 엄격한 네트워크 시나리오가 확정되었다
+
+## TASK-20260910-listener-recovery — 아이콘 배포 중 공인 주소 접근 복구
+
+1.3.1 출하 검수에서 Windows112.185.196.20:80/443은 연결 거부, localhost와 WSL 직접 주소는 정상임을 확인했다. 설정값 존재와 예약작업 rc0은 실제 리스너 정상의 근거가 아니었다. 기존 10:01 종결 기록의 범위를 설정·예약작업 상태 확인으로 한정한다.
+
+### 2.1 Implementation Plan
+- 위험도 Minor. 기존 공개 주소/포트/전달 대상을 유지하며 없는 리스너만 복구한다. 다른 포트·방화벽·서비스 재시작은 변경하지 않는다.
+- 동기화 스크립트: 매핑과 실제 TCP 리스너가 모두 맞을 때만 unchanged. 설정은 같지만 리스너가 없으면 활성 연결을 확인하고, 0건일 때 해당 포트만 recovered. 재등록 뒤에도 없으면 nonzero. 실제 연결 검사 실패도 nonzero.
+- 운영 복구는 RepairOnly: 상태 조회 실패·대상 불일치·방화벽/legacy 변경 요청을 거절한다. 기존 정기 WSL IP 동기화 기본 계약은 유지한다.
+- 관리자 적용: 소스/기존 배포본 SHA 고정 검사, 대상 매핑·WSL 직결 확인, ProgramData 백업·정본 배포, 80/443 한정 호출, 다른 매핑·6379/28080 리스너 보존 대조.
+- Windows 비승격 mock 6건 및 독립 QA/security 검토. 실제 적용은 UAC를 통해 Windows 사용자가 승인해야 한다. 일반 토큰 administrator=false, ProgramData write/예약작업 조회 Access denied.
+
+- [x] 원인 확인·리스너 조건과 엄격 복구 옵션 구현·Windows mock 6건 및 독립 리뷰
+- [x] 관리자 적용·공인 주소 HTTPS 다운로드·실제 DQA 기본 진입 검증 — 사용자 UAC 승인, 80/443 recovered 및 타 포트 보존, 기본 실제 DQA 화면 PASS

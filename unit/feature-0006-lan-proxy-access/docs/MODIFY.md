@@ -440,3 +440,9 @@ denied`), 비-상승 PowerShell 의 `IsReadOnly=false` 도 거부된다(디렉�
   옛 이름 `TaskCache\Tree` 빈 껍데기도 재부팅으로 소멸.
 - 앞 두 관측의 「무재발」 오판은 `IgnoreNew` 억제 때문이었고, 이번 판정은 인스턴스 0건 +
   경계 130회 이상이라는 두 조건으로 구분된다.
+
+## CHG-20260910T113352-listener-recovery
+- Timestamp: 2026-09-10T11:33:52+09:00
+- Related TASK: TASK-20260910-listener-recovery
+- 설정과 실제 리스너 drift를 검출하여 연결이 없는 누락 포트만 복구한다. RepairOnly로 조회 실패/대상 불일치 시 무변경 중단하고, postcheck와 TCP 실패를 nonzero로 보고한다.
+- 검증/한계: [원장](test-runs.d/20260910-listener-recovery.md). 사용자 UAC 승인 적용·public HTTPS 다운로드·기본 DQA 화면 PASS.
