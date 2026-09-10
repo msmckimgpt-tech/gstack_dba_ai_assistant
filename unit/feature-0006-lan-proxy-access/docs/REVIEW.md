@@ -389,3 +389,10 @@ legacy skip 은 순수한 정리 동기였고 실제로 무해해 보였다. 그
 - **검증**: 프로브 작업 3회(SYSTEM / 사용자 Interactive / 사용자 S4U)로 각 조합의 WSL 조회 결과를
   실측했고, 교정한 파라미터 조합(S4U + 5분반복 3650일)으로 라이브 작업을 실제 재등록해
   `logon=S4U user=mckim runlevel=Highest` 를 확인했다.
+
+## REV-20260910T100000-portproxy-closeout [SKIPPED:non-policy-doc] — ACCEPTED
+
+- **일시**: 2026-09-10
+- **범위**: 종결 실측 기록만(문서). 코드 변경 0.
+- **Trigger**: non-policy-doc → panel SKIP. 실측 대상 코드는 `REV-20260909T070000-portproxy-s4u`
+  에서 이미 판정됐다.
