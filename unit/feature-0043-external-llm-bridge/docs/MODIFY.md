@@ -4941,3 +4941,7 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 - TASK-20260910-effort-contract / FR-learned-cli-flag-overrides-adapter. 알려진 CLI의 모델·추론 플래그를 공통 어댑터로 결정하여 오염 캐시와 AI의 잘못된 옵션 설명이 실행 계약을 덮어쓰는 경로를 봉인했다. 캐시를 사용자가 지울 필요 없이 정제·probe·verify 및 실행 경계에서 치유한다.
 - 모델/등급 값 목록, 미등록 CLI의 학습 호출법, 누락 축 재협상, 권한/위치 선택 경계를 보존했다. 실패·빈 답변은 미적용 사실만 알리고 성공 대체응답에서만 “답했습니다”를 쓴다. 옵션 오류의 구버전 추정 및 터미널 재설치 안내를 제거했다.
 - 검증: 신규 15건 포함 집중 226 PASS; 초기 신규 11건을 이전 main 번들에 적용 시 9 FAIL/2 PASS로 결함 재현. 자세한 설치본·배포 증거는 test-runs.d/20260910-effort-contract.md.
+
+## CHG-20260910T135000-effort-deploy-evidence
+
+- 같은 사용자 수정 범위의 출하 결과 문서화: PR1675/web9ecd324e 배포와 설치 DQA 자동 갱신·캐시 보정·heartbeat 복귀 증거, 원 쿼리 UI 재요청 미수행 및0건 모집단 한계를 TASK/REPORT/Run/원장에 반영했다. 코드/서빙 산출물 변경 없음.

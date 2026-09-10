@@ -2,7 +2,7 @@
 run_at: 2026-09-10T13:40:00+09:00
 session: codex-effort-contract-20260910
 scope: [runtime-options, capability-cache, degraded-answer]
-verdict: partial
+verdict: pass-with-live-limit
 ---
 
 # TASK-20260910-effort-contract 검증
@@ -34,3 +34,21 @@ Evidence: Windows Claude 2.1.70, 원 캐시 --reasoning-effort/high → argv --e
 
 - 구조 검사 정합 후 해당 모듈+신규 테스트 **36 PASS**(2.63s). 전체 실행의 유일 실패 해소, 나머지 1795 PASS/1 skipped 결과 유지. `verify-completion --pre-commit feature-0043-external-llm-bridge` PASS.
 - 공식 CLI 계약 대조: https://code.claude.com/docs/en/cli-usage (`--effort`); 설치 Windows 도움말을 최종 실행 근거로 사용했다.
+
+## 배포 및 설치 DQA 자동 복구 — 2026-09-10 13:49 KST
+
+- PR #1675 main merge `9ecd324eaae89f094f0b4939c9668be74f3cf13d`, 구현 commit `50947e26`. 기존 배포 잠금 해제 후 `make deploy-web-only` exit0. web-a/web-b 9ecd324e healthy, Caddy 후보 복귀 및90초 soak PASS, KEK 존재 확인(값 비노출). 기존 snap-docker metadata-file race는 스파인이 이미지 commit 정합을 검증해 처리. 워커/MCP 미변경·대화 스모크 NOT-RUN.
+- 공개 /healthz HTTP200 git_commit=9ecd324e. 공개 runner /static/agent/bridge_agent.py HTTP200, SHA-256 `371cac83d087e308588d420ca52f156c8cc484c30c1697f267cf9c83b609c42d`. 빌드 산출물 및 설치 DQA의 bundle SHA-256과 전체 일치.
+
+Environment: DQA-client
+Result: PASS
+Scenario: 실행 중 설치 DQA의 러너 자동 갱신·오염 캐시 보정·연결 복귀
+Build: DQAConnect 1.4.0-1 / server 9ecd324e / runner 371cac83d087
+Evidence: 원 개별 runner가 13:48:01 run.selfupdate(old 68340862901e → new 371cac83d087), PID44656 종료 후 PID26088 시작, 13:48:03 run.ready(runtime=claude), 13:49:18 bridge_heartbeat api.ok. 같은 개별 config.json의 effort가 --reasoning-effort에서 --effort로 자동 보정됨. 앱/캐시를 작업자가 재시작·삭제·편집하지 않았다.
+
+Environment: DQA-client
+Result: NOT-RUN
+Scenario: 설치 DQA에서 동일 오류 입력 재요청 후 답변 도달
+Reason: 원 사용자 대화는 감사 읽기 전용으로 유지했다. CLI 실응답과 설치 자동복구까지 검증했고 원 쿼리는 자동 재전송하지 않았다.
+Alternative: 같은 PC의 설치 CLI에 원 오염 캐시로 생성한 명령을 실행하여 exit0/DQA_EFFORT_OK, 오류 없는 응답 확인.
+- 회귀 시계열: 갱신 이후 assistant 0건/동일 signature 0건으로 모집단이 없어 마찰 소멸 통계 판정은 inconclusive. 원장 상태 fixed:deployed:unverified-live 유지.

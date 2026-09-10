@@ -16,7 +16,7 @@ source_of_truth: true
 - 원장: docs/improvements/conversation-audit/FRICTION_LEDGER.md FR-learned-cli-flag-overrides-adapter.
 
 ### Git 동기화 결과
-- 전용 branch ai/codex/feature-0043-effort-contract-20260910. verify 후 commit/push/PR/finalize 및 web-only 배포 진행. 최종 merge hash/출하 결과는 PR과 종료 보고에 기록한다.
+- PR #1675 / main 9ecd324e, verify PASS, web-only 배포 exit0 및90초 soak PASS. 설치 DQA runner 371cac83d087 자동 갱신·오염 캐시 보정·heartbeat 복귀 확인. 원 쿼리 UI 재요청은 NOT-RUN. 출하 증거 Run 추가 commit은 문서 전용이라 제품 재배포 불요.
 
 
 ## TASK-20260909-session-continuity — 대화별 AI 세션과 그룹 문맥

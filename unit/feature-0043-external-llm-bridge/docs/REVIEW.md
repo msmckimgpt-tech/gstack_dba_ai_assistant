@@ -5254,3 +5254,11 @@ LLM 에게 자기소개를 시키던 축 전체가 이 한 줄로 대체됐다 �
 - Verdict: PASS
 - Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260910-effort-contract-qa.md
 - Human Approval Needed: no — 사용자 명시 수정 범위 Minor; §16.5.1 출하 포함
+
+## REV-20260910T135000-effort-deploy-evidence [SKIPPED:non-policy-doc] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260910-effort-contract
+- Trigger: non-policy doc-only/출하 증거 기록; 구현 backend/qa PASS 재사용
+- Timestamp: 2026-09-10T13:50:00+09:00
+- Verdict: PASS
+- Evidence: test-runs.d/20260910-effort-contract.md, PR #1675, deploy exit0, 설치 full hash/heartbeat/보정 캐시 일치.
+- Human Approval Needed: no
