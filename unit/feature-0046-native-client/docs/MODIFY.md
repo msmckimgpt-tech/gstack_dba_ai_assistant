@@ -1053,3 +1053,7 @@ edit_policy: append-only
 - TASK: TASK-20260910-transparent-icon-release
 - 1.3.1 버전, 안정launcher/ICO, 기존launcher 교체, 실패활성화차단, 실패완료안내, 신규/upgrade제거 정합. 옛1.1.3후보미게시. mainDOM테스트nonce기대값정합.
 - native624/웹30/노트34·실제Windows설치/아이콘/실패/제거 증적: [원장](test-runs.d/20260910-transparent-icon-release.md).
+
+## CHG-20260910T111451-icon-integration-record
+- Timestamp: 2026-09-10T11:14:51+09:00
+- merge commit combined diff에서 checkbox/CHG/review 항목을 읽지 못한 post-commit 검사에 대해 정상 후속 커밋으로 이번 cycle 완료 기록을 추가한다. 제품 bytes는 변경하지 않는다.
