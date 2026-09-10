@@ -17,7 +17,7 @@ from .base import CHILD_TEXT_IO
 from .state import note_ai_outcome, note_ai_probing, note_ai_unusable
 from .discovery import _resolve_exe, _which_ai
 from .logs import _log, log_event
-from .runtimes import _FORBIDDEN_FLAG_FRAGMENTS, _RUNTIME_SPECS
+from .runtimes import _FORBIDDEN_FLAG_FRAGMENTS, _RUNTIME_SPECS, runtime_option_flag
 
 #: AI 가 답한 **값**(모델·등급)에 요구하는 모양. 서버 쪽 `_CAPS_VALUE_RE` 와 같은 집합이다.
 #:
@@ -45,7 +45,7 @@ _CAPS_VALUE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/+-]{0,63}$")
 #:
 #: 플랫폼마다 모델·추론 지정 방법이 다르다(`--model` / `-m` / `-c key=value`). 우리가 표로
 #: 갖고 있으면 새 플랫폼은 우리 배포를 기다려야 한다. AI 가 자기 호출법을 말하면 그 종속이
-#: 사라진다 — 사용자가 어떤 CLI 를 쓰든 우리 코드는 그대로다.
+#: 사라진다. 단, 알려진 CLI의 호출법은 검증된 어댑터를 사용하고 미등록 CLI만 학습한다.
 #: 능력 질의 앞에 붙는 **도구 금지 가드** (사용자 제보 2026-09-02, 4차: 「어려운 작업이
 #: 아니므로 신속해야 한다」).
 #:
@@ -414,6 +414,10 @@ def sanitize_caps(raw: object) -> dict:
             continue
         model_flag = _coerce_flag(caps.get("model"), "{model}") if caps.get("model") else None
         effort_flag = _coerce_flag(caps.get("effort"), "{effort}") if caps.get("effort") else None
+        if model_flag:
+            model_flag = runtime_option_flag(name, "model", {"model": model_flag})
+        if effort_flag:
+            effort_flag = runtime_option_flag(name, "effort", {"effort": effort_flag})
         argv = caps.get("argv")
         if argv is not None:
             # 호출 형태도 같은 규칙 — 첫 토큰은 실행 파일 이름(= 이 런타임)이어야 하고,
@@ -871,8 +875,12 @@ def _settle_effort_axis(
     ② 우리 표의 짝을 **그 CLI 자신의 `--help` 로 검증**해서 쓴다(우리가 아는 값이라도
     실재를 확인하고 쓴다). ③ 도움말에 없으면 축을 비운다 — 지어내지 않는다.
     """
-    if flag and options and _flag_fits_axis(flag, "effort"):
-        return flag, options, True      # AI 가 짝을 다 줬다 — 그대로.
+    if flag and options:
+        canonical = runtime_option_flag(name, "effort", {"effort": flag})
+        if name in _RUNTIME_SPECS:
+            return canonical, options if canonical else [], True
+        if _flag_fits_axis(canonical, "effort"):
+            return canonical, options, True
 
     # ① 축만 좁게 재질의. 큰 JSON 하나를 요구할 때 빠뜨린 필드를, 그것만 물으면 답한다.
     if left >= _CAPS_AXIS_MIN_SEC:
@@ -881,8 +889,12 @@ def _settle_effort_axis(
         if got is not None:
             re_flag = _coerce_flag(got.get("effort_flag"), "{effort}")
             re_opts = _coerce_options(got.get("efforts"), limit=12)
-            if re_flag and re_opts and _flag_fits_axis(re_flag, "effort"):
-                return re_flag, re_opts, True
+            if re_flag and re_opts:
+                canonical = runtime_option_flag(name, "effort", {"effort": re_flag})
+                if name in _RUNTIME_SPECS:
+                    return canonical, re_opts if canonical else [], True
+                if _flag_fits_axis(canonical, "effort"):
+                    return canonical, re_opts, True
             # ⚠ **명시적 부정만** 존중한다 (codex P1-2). 종전에는 "flag 도 없고 목록도 없다"
             #   를 전부 "이 CLI 는 지원하지 않는다" 로 읽었는데, 그 조건은 `{}`·필드 누락·
             #   형태 오류(거부된 플래그)까지 같이 삼킨다. 그러면 실제로는 지원하는 CLI 가
@@ -991,7 +1003,8 @@ def probe_runtime_caps(name: str, argv: list[str],
         if reason_out is not None:
             reason_out["reason"] = "응답에 모델 목록이 없습니다."
         return None
-    model_flag = _coerce_flag(got.get("model_flag"), "{model}")
+    model_flag = runtime_option_flag(name, "model", {
+        "model": _coerce_flag(got.get("model_flag"), "{model}")})
     effort_flag, efforts, effort_settled = _settle_effort_axis(
         name, argv,
         _coerce_flag(got.get("effort_flag"), "{effort}"),
@@ -1275,7 +1288,8 @@ def verify_runtime_caps(name: str, argv: list[str], entry: dict,
         if reason_out is not None:
             reason_out["reason"] = "확인 응답에 쓸 수 있는 모델이 없습니다."
         return None
-    model_flag = _coerce_flag(got.get("model_flag"), "{model}")
+    model_flag = runtime_option_flag(name, "model", {
+        "model": _coerce_flag(got.get("model_flag"), "{model}")})
     effort_flag, efforts, effort_settled = _settle_effort_axis(
         name, argv,
         _coerce_flag(got.get("effort_flag"), "{effort}"),

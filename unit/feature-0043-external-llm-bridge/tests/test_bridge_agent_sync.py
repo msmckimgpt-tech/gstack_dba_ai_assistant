@@ -400,7 +400,7 @@ def test_runner_passes_prompt_as_argv_not_shell():
 def test_runner_submits_even_on_ai_failure():
     """AI 가 실패해도 **답을 제출한다** — 침묵하면 사용자 화면이 30분간 대기 상태로 남는다."""
     src = CANON.read_text(encoding="utf-8")
-    idx = src.index("if not ok or not answer.strip():")
+    idx = src.index("if not generated_answer:")
     # 고정 글자수 window 를 쓰지 않는다 — 그 사이에 한 줄만 늘어도(주석 포함) 제출 호출이
     # 창 밖으로 밀려 "제출 경로가 없다" 는 거짓 실패가 난다(2026-08-31 실제로 그랬다).
     # 이 분기가 속한 **함수의 나머지 전체**를 본다.

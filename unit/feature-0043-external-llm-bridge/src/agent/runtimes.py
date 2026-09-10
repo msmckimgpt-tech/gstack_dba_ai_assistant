@@ -78,6 +78,13 @@ _STRICT_MCP_FLAG = "--strict-mcp-config"
 #: 실제 시스템 채널로 넘기면 같은 지침이 **본문 밖**에 놓여 그 서명이 사라진다.
 _APPEND_SYSTEM_FLAG = "--append-system-prompt"
 
+def runtime_option_flag(runtime: str, axis: str, local: dict | None = None) -> list[str] | None:
+    """기존 CLI 어댑터의 호출법은 AI 응답·캐시가 덮어쓸 수 없다."""
+    source = _RUNTIME_SPECS[runtime] if runtime in _RUNTIME_SPECS else (local or {})
+    flag = source.get(axis)
+    return list(flag) if flag else None
+
+
 _RUNTIME_SPECS: dict[str, dict] = {
     "claude": {
         "label": "Claude",
