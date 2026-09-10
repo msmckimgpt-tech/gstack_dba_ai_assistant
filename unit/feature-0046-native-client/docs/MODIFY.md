@@ -1057,7 +1057,11 @@ edit_policy: append-only
 ## CHG-20260910T111451-icon-integration-record
 - Timestamp: 2026-09-10T11:14:51+09:00
 - merge commit combined diff에서 checkbox/CHG/review 항목을 읽지 못한 post-commit 검사에 대해 정상 후속 커밋으로 이번 cycle 완료 기록을 추가한다. 제품 bytes는 변경하지 않는다.
-
+## CHG-20260910T114000-icon-shipping-closeout
+- Timestamp: 2026-09-10T11:40:00+09:00
+- Related TASK: TASK-20260910-transparent-icon-release
+- 1.3.1 공개 및 public/localhost 다운로드, 실제 기본 DQA 로고/작업 표시줄, 웹 ready/soak 증적을 기록했다. 캡처 하네스는 기존 .NET Drawing, DPI 인식과 자기 창 가림 방지/원복을 사용한다. 사용자 설치/프로세스는 보존했다.
+- [출하 원장](test-runs.d/20260910-transparent-icon-release.md).
 ## CHG-20260910T113000-inapp-update
 
 - Session: codex:root:01a08911-d62c-7d32-85cc-893b77a3161f
@@ -1066,6 +1070,15 @@ edit_policy: append-only
 - Changes: 1.4.0 updater는 Update ZIP만 수신한다. 경로·압축량·무결성·실행 검사 후 새 슬롯을 활성화하고 현재 프로세스를 유지한다. builder/publisher/server는 Setup/ZIP을 같은 채널로 게시·철회하고 동시 게시 및 원본 변조를 거부한다. 기존 설치기와 공통 mutex, 같은 버전 불변 파일, 제거 시 소유 slots 정리를 적용한다.
 - Migration: 1.3.x 이하의 최초 전환만 기존 앱 내 설치기 경로가 필요하다. 1.2.x의 기존 자체 종료는 소급 변경할 수 없다.
 - Verification: test-runs.d/20260910-inapp-update.md에 CLI/실제 Windows/채널 축을 구분 기록.
+
+## CHG-20260910T114600-latest-main-integration
+- Timestamp: 2026-09-10T11:46:00+09:00
+- c684d12a의 1.4.0 제품·템플릿 v3.54.3을 통합했다. origin/main 대비 제품 변경은 본 cycle의 Windows portproxy 운영 코드뿐이고 native 변경은 테스트 하네스뿐이다. FUNCTION은 최신1.4.0 계약을 보존한다.
+- 정책 diff는 template_version 한 줄이며 본문 계약은 동일하다. 현재 AGENTS SHA256 21286d42d52a987af6bed233fb5c050b429ddfa77d33b4979fea3acb4a17fdef.
+
+## CHG-20260910T114800-postmerge-record
+- Timestamp: 2026-09-10T11:48:00+09:00
+- 통합6bdcc7ba의 최신1.4.0 제품 보존과 출하 증적을 확인했다. merge combined diff를 읽는 post-commit gate의 checkbox/CHG/REVIEW 미인식은 정상 후속 문서 커밋으로 정합한다. 제품·운영 bytes 추가 변경 없음.
 
 ## CHG-20260910T115000-inapp-update-release
 - Type: docs

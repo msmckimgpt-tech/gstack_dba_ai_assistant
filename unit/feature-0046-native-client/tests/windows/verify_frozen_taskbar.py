@@ -15,6 +15,7 @@ from pathlib import Path
 ap = argparse.ArgumentParser()
 ap.add_argument('--app', type=Path, required=True)
 ap.add_argument('--out', type=Path, required=True)
+ap.add_argument('--base')
 args = ap.parse_args()
 sys.path.insert(0, str(Path(__file__).parent))
 from verify_taskbar_identity import read_window_properties, capture_taskbar
@@ -25,12 +26,16 @@ profile.mkdir()  # Never reuse a profile that could contain login state.
 env = {k:v for k,v in os.environ.items() if not k.startswith('BRIDGE_')}
 env['USERPROFILE'] = str(profile)
 app = args.app.resolve()
-proc = subprocess.Popen([str(app)], env=env)
+proc = subprocess.Popen([str(app), *(['--base', args.base] if args.base else [])], env=env)
 u = ctypes.windll.user32
+u.SetThreadDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+u.SetThreadDpiAwarenessContext.restype = ctypes.c_void_p
+u.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4))
 u.GetWindowThreadProcessId.argtypes = [W.HWND, ctypes.POINTER(W.DWORD)]
 u.GetClassNameW.argtypes = [W.HWND, W.LPWSTR, ctypes.c_int]
 u.IsWindowVisible.argtypes = [W.HWND]
 u.PostMessageW.argtypes = [W.HWND, W.UINT, W.WPARAM, W.LPARAM]
+u.SetWindowPos.argtypes = [W.HWND, W.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, W.UINT]
 CB = ctypes.WINFUNCTYPE(W.BOOL, W.HWND, W.LPARAM)
 u.EnumWindows.argtypes = [CB, W.LPARAM]
 def windows():
@@ -46,7 +51,7 @@ def windows():
         return True
     u.EnumWindows(callback, 0)
     return found
-result = {'pid':proc.pid, 'profile':str(profile), 'verdict':'FAIL'}
+result = {'base':args.base, 'pid':proc.pid, 'profile':str(profile), 'verdict':'FAIL'}
 checks_passed = False
 try:
     deadline = time.monotonic()+45
@@ -74,7 +79,17 @@ try:
     assert all(v['vt']==31 for v in values.values())
     time.sleep(1)
     result['taskbar'] = capture_taskbar(out)
-    from PIL import ImageGrab
+    import clr
+    clr.AddReference("System.Drawing")
+    from System.Drawing import Bitmap, Graphics
+    from System.Drawing.Imaging import ImageFormat
+    u.ShowWindow.argtypes = [W.HWND, ctypes.c_int]
+    u.SetForegroundWindow.argtypes = [W.HWND]
+    u.ShowWindow(shown[0], 9)
+    u.SetForegroundWindow(shown[0])
+    # Foreground activation can be denied after UAC; raise only our probe.
+    assert u.SetWindowPos(shown[0], W.HWND(-1), 0, 0, 0, 0, 0x0003)
+    time.sleep(1)
     rectangle = W.RECT()
     u.GetWindowRect.argtypes = [W.HWND, ctypes.POINTER(W.RECT)]
     assert u.GetWindowRect(shown[0], ctypes.byref(rectangle))
@@ -83,13 +98,24 @@ try:
     u.GetAncestor.argtypes = [W.HWND, W.UINT]
     u.GetAncestor.restype = W.HWND
     center = W.POINT((rectangle.left + rectangle.right)//2, (rectangle.top + rectangle.bottom)//2)
-    assert u.GetAncestor(u.WindowFromPoint(center), 2) == shown[0], 'Probe window is occluded'
-    screenshot = ImageGrab.grab(bbox=(rectangle.left, rectangle.top, rectangle.right, rectangle.bottom))
-    screenshot.save(out / 'dqa-window.png')
+    covering = u.GetAncestor(u.WindowFromPoint(center), 2)
+    cover_class = ctypes.create_unicode_buffer(256)
+    u.GetClassNameW(covering, cover_class, 256)
+    assert covering == shown[0], {'reason':'Probe window is occluded', 'covering_class':cover_class.value, 'rectangle':[rectangle.left, rectangle.top, rectangle.right, rectangle.bottom]}
+    screenshot = Bitmap(rectangle.right - rectangle.left, rectangle.bottom - rectangle.top)
+    graphics = Graphics.FromImage(screenshot)
+    try:
+        graphics.CopyFromScreen(rectangle.left, rectangle.top, 0, 0, screenshot.Size)
+        screenshot.Save(str(out / 'dqa-window.png'), ImageFormat.Png)
+    finally:
+        graphics.Dispose()
+        screenshot.Dispose()
     result['window_screenshot'] = str(out / 'dqa-window.png')
     assert (profile / '.dqa-connect/window').is_dir()
     checks_passed = True
 finally:
+    if 'shown' in locals() and shown:
+        u.SetWindowPos(shown[0], W.HWND(-2), 0, 0, 0, 0, 0x0003)
     trays = [h for h,c,v in windows() if c == 'DQAConnectTrayWindow']
     for hwnd in trays:
         u.PostMessageW(hwnd, 0x0111, 0x0400+5, 0)

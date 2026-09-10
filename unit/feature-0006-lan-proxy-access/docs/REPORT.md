@@ -159,3 +159,7 @@ Windows 예약작업이 5분마다 포트프록시를 **조건 없이 재설정*
   원인은 아니지만 5분마다 반복할 필요가 있는지는 재검토 여지가 있다(`-SkipVerify` 존재).
 - **`win-browser-setup.ps1` 은 한글 28줄인데 BOM 이 없다** — 이번에 확인한 것과 같은 인코딩 위험을
   안고 있다. 별 cycle 로 점검 권장.
+
+## TASK-20260910-listener-recovery
+
+설정 일치/예약 작업 rc0으로 실제 TCP 리스너 정상 여부를 판단하던 누락을 수정했다. 연결0인 누락 포트만 복구하고 실패는 nonzero로 반환한다. RepairOnly로 범위 외 변경을 차단한다. 독립 QA/security P1/P2 0 및 Windows mock6/6 통과 후 사용자 UAC 승인으로 ProgramData 정본과80/443을 복구했다. 타 매핑·6379/28080·방화벽·서비스 유지. public/localhost 다운로드와 기본 실제 DQA 로그인/작업 표시줄 PASS. [정본 증적](test-runs.d/20260910-listener-recovery.md).

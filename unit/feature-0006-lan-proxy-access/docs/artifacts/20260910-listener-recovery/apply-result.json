@@ -1,0 +1,51 @@
+{
+    "firewall_change":  false,
+    "service_restart":  false,
+    "sync":  {
+                 "listen_address":  "112.185.196.20",
+                 "connect_address":  "172.26.154.233",
+                 "route_interface":  "",
+                 "remote_addresses":  [
+                                          "LocalSubnet"
+                                      ],
+                 "ports":  [
+                               {
+                                   "listen_port":  80,
+                                   "firewall_rule":  "",
+                                   "portproxy_action":  "recovered",
+                                   "verify_listen":  null,
+                                   "verify_connect":  null,
+                                   "verify_http_status":  null
+                               },
+                               {
+                                   "listen_port":  443,
+                                   "firewall_rule":  "",
+                                   "portproxy_action":  "recovered",
+                                   "verify_listen":  null,
+                                   "verify_connect":  null,
+                                   "verify_http_status":  null
+                               }
+                           ],
+                 "removed_legacy_ports":  [
+                                              null
+                                          ],
+                 "legacy_ports_deleted":  [
+
+                                          ],
+                 "removed_legacy_firewall_rules":  {
+
+                                                   },
+                 "portproxy_state_known":  true,
+                 "portproxy_changed":  true,
+                 "portproxy":  "ipv4 수신 대기:             ipv4에 연결:\r\n\r\n주소            포트        주소            포트\r\n--------------- ----------  --------------- ----------\r\n0.0.0.0         28080       127.0.0.1       28080\r\n0.0.0.0         6379        172.26.154.233  6379\r\n112.185.196.20  80          172.26.154.233  80\r\n112.185.196.20  443         172.26.154.233  443"
+             },
+    "changed_ports":  [
+                          80,
+                          443
+                      ],
+    "protected_listeners_unchanged":  true,
+    "other_mappings_unchanged":  true,
+    "backup":  "C:\\ProgramData\\mysql_ai_web_portproxy\\sync_mysql_ai_web_portproxy.ps1.backup-20260910-113237",
+    "source_sha256":  "7b629d37f3f221f6f6864ff69be212295e4d785af48ec60add2cbafb6f945f86",
+    "result":  "PASS"
+}

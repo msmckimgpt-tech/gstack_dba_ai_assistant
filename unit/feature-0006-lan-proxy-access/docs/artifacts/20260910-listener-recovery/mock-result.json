@@ -1,0 +1,62 @@
+{
+    "result":  "PASS",
+    "cases":  [
+                  {
+                      "case":  "healthy mappings retain both listeners",
+                      "result":  "PASS",
+                      "mutations":  [
+
+                                    ],
+                      "listener_checks":  2,
+                      "expected_error":  null
+                  },
+                  {
+                      "case":  "only missing 443 listener is recovered",
+                      "result":  "PASS",
+                      "mutations":  [
+                                        "interface portproxy delete v4tov4 listenaddress=192.0.2.10 listenport=443 protocol=tcp",
+                                        "interface portproxy add v4tov4 listenaddress=192.0.2.10 listenport=443 connectaddress=198.51.100.20 connectport=443 protocol=tcp"
+                                    ],
+                      "listener_checks":  3,
+                      "expected_error":  null
+                  },
+                  {
+                      "case":  "active connections prevent listener replacement",
+                      "result":  "PASS",
+                      "mutations":  [
+
+                                    ],
+                      "listener_checks":  2,
+                      "expected_error":  "Listener missing on 192.0.2.10:443 but active connections remain; retry after they drain."
+                  },
+                  {
+                      "case":  "failed listener recovery cannot report success",
+                      "result":  "PASS",
+                      "mutations":  [
+                                        "interface portproxy delete v4tov4 listenaddress=192.0.2.10 listenport=443 protocol=tcp",
+                                        "interface portproxy add v4tov4 listenaddress=192.0.2.10 listenport=443 connectaddress=198.51.100.20 connectport=443 protocol=tcp"
+                                    ],
+                      "listener_checks":  22,
+                      "expected_error":  "Portproxy registered but listener is still absent on 192.0.2.10:443."
+                  },
+                  {
+                      "case":  "RepairOnly rejects unknown mappings without mutation",
+                      "result":  "PASS",
+                      "mutations":  [
+
+                                    ],
+                      "listener_checks":  0,
+                      "expected_error":  "RepairOnly requires known mappings, SkipFirewall, and no legacy ports."
+                  },
+                  {
+                      "case":  "RepairOnly rejects a changed target without mutation",
+                      "result":  "PASS",
+                      "mutations":  [
+
+                                    ],
+                      "listener_checks":  1,
+                      "expected_error":  "Mapping changed on 192.0.2.10:443; RepairOnly refuses to replace a target."
+                  }
+              ],
+    "live_mutations":  0
+}

@@ -1430,7 +1430,14 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Human Approval Needed: no
 - 마지막 독립 확인에서 P1/P2 0. 실제 Windows 실패보존·설치·제거·작업표시줄 및 디자인 증적을 검토했다. 수동 설치 실패 완료화면 픽셀 미검증은 원장에 명시했고 차단 결함으로 판정하지 않았다.
 - [리뷰](reviews/20260910-transparent-release.md), [실측](test-runs.d/20260910-transparent-icon-release.md).
-
+## REV-20260910T114000-icon-shipping [SUBAGENT:icon_release_review]
+- Related TASK: TASK-20260910-transparent-icon-release
+- Timestamp: 2026-09-10T11:40:00+09:00
+- Trigger: QA/검증 하네스의 실제 Windows 캡처와 종료 계약.
+- Verdict: PASS
+- Human Approval Needed: no
+- 추가 P1/P2 0. SetWindowPos의 초기 argtypes, 생성한 probe PID로 창/종료 대상 제한, 성공/실패 경로 최상위 해제·종료를 확인했다. 기본 공인 주소 실행의 taskbar capture 및 graceful_exit=true 증적 확인. 제품 설치/작업 표시줄 디자인 검토는 앞 독립 2인 승인본과 동일하다.
+- [최종 출하 증적](test-runs.d/20260910-transparent-icon-release.md).
 ## REV-20260910T113000-inapp-update [SUBAGENT:backend-security-qa] — PASS
 - Related TASK: feature-0046-native-client / TASK-20260910-inapp-update
 - Trigger: API/응답 계약 · package/실행 파일 갱신
@@ -1448,6 +1455,22 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Human Approval Needed: no
 
 실행 근거: 사용자가 앱 내부 무설치 갱신 구성을 직접 요청했다. 기존 승인된 per-user 슬롯/신뢰 서버·CA/사용자 확인 경계를 유지한다. /client는 동일 제품 바이너리의 ZIP 포장만 추가하며 계정 데이터·새 인증 경로를 노출하지 않는다. deploy_scope included는 wrapper FIRST_REQUEST 및 AGENTS §16.5.1의 기존 선언이다. review-panel 글로벌 resolver는 프로젝트 미등록으로 실패했고, 다른 프로젝트 명령을 대체 호출하지 않고 §18.8 명시 독립 subagent 절차를 수행했다.
+
+## REV-20260910T114600-latest-main-integration [SUBAGENT:icon_release_review]
+- Related TASK: TASK-20260910-transparent-icon-release
+- Timestamp: 2026-09-10T11:46:00+09:00
+- Trigger: backend/QA 최신 제품 보존과 문서 충돌 해소 검토.
+- Verdict: PASS
+- Human Approval Needed: no
+- 고정 c684d12a 대비 native/web src와 native FUNCTION 동일, TASK/REPORT의1.4.0 본문 보존 및1.3.1 증적 병존 확인. 추가 P1/P2 0, 충돌0, diff check PASS.
+
+## REV-20260910T114800-postmerge-record [SKIPPED:non-policy-doc]
+- Related TASK: TASK-20260910-transparent-icon-release
+- Timestamp: 2026-09-10T11:48:00+09:00
+- Trigger: 비정책 merge 결과/출하 기록 정합.
+- Verdict: PASS
+- Human Approval Needed: no
+- 제품 코드 추가 변경 없음. 6bdcc7ba는 native/web1.4.0 제품과 FUNCTION 동일성에 대한 독립 QA 확인 P1/P2 0 및 승인한 운영 복구 코드를 보존한다. 실제 Windows/공인 채널 증적은 기존 Run을 참조한다.
 
 ## REV-20260910T115000-inapp-update-release [SKIPPED:non-policy-doc]
 - Related TASK: feature-0046-native-client / TASK-20260910-inapp-update

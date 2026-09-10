@@ -50,6 +50,31 @@ Minor: 기존 per-user 슬롯/신뢰 서버/CA/동의 경계 유지. 현재 요�
 - hot_paths: client updater/installation, scripts build/publish, web routers/client_release.py; 기존 상태는 task-history/20260910-before-inapp-update.md.
 - 참고: Python zipfile 공식 문서의 경로 정화·압축 해제 자원 제한, Microsoft CreateMutexW 공식 문서의 이름 공간·동시 실행 계약.
 
-## 완료 증거
+## 앱 내부 갱신 완료 증거
 
 제품 PR #1670, 병합·웹 배포 c684d12a, 공개 채널 1.4.0. 실제 Windows ZIP 갱신·구버전 최초 전환·운영 서버 다운로드/해시·제거 PASS. [출하 Run](test-runs.d/20260910-inapp-update-release.md). 전체 feature의 다른 잔여 작업과 이 요청 완료를 구분한다.
+
+## TASK-20260910-transparent-icon-release
+
+사용자 요청: 전진한 버전을 반영하여 투명 아이콘을 배포까지 완료한다. 이전 SVG 승인과 마상 브랜드 방향을 유지한다.
+
+- main/공개 채널 1.3.0을 통합하여 1.3.1을 배포했다. 슬롯 설치와 실행 중 연결 유지, 텍스트 선택·검색 등 최신 기능을 보존한다.
+- 안정 실행기·ICO 경로를 창 재실행 속성/바로가기/프로토콜/제거 표시에 사용하고 기존 실행기의 PE 아이콘도 무중단 교체한다.
+- 정책 SHA-256: a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2. 위험도 Minor, 사용자 배포 명시 승인.
+- 이전 아이콘 작업/잠금 화면으로 시각 검수 보류한 증적: [20260910-before-icon-release.md](task-history/20260910-before-icon-release.md). 1.1.3 후보는 게시하지 않는다.
+
+- [x] 최신 main 충돌 해소·안정 실행기 및 투명 자산 경로 정합
+- [x] 회귀·실제 Windows 신규/업그레이드 설치·작업 표시줄 검수·독립 리뷰
+- [x] PR 병합·1.3.1 설치기 및 웹 배포·실제 다운로드/라이브 검증 (public/localhost 다운로드·실제 기본 DQA 화면 PASS)
+
+- [x] 통합 merge b63ffb75의 양 부모 보존과 독립 최종 리뷰 확인, normal commit으로 완료 게이트 증적 정합
+
+- [x] 배포 검수에서 발견한 Windows 공인주소80/443 리스너 누락 복구·공인주소 실제접속 확인 — UAC 승인 적용, Windows 실제 다운로드/기본 DQA 화면 PASS
+
+- [x] 1.3.1 공개·웹 배포·공인 주소 복구와 실제 DQA 최종 증적 정합
+
+- [x] 출하 후 main 1.4.0(c684d12a) 전진 통합 — 최신 제품 코드 보존, 아이콘 출하 기록만 병존
+
+- [x] 최신 c684d12a 제품 및 1.4.0 출하 소유권 보존, 운영 배포본 SHA 동일 확인
+
+- [x] 통합6bdcc7ba의 양 부모 보존·충돌 해소 독립 검토 및 최종 출하 기록 확인

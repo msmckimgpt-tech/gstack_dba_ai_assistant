@@ -10,6 +10,7 @@ param(
     [string[]]$LegacyFirewallRuleNames = @("mysql_ai_web_18080"),
     [string[]]$RemoteAddresses = @("LocalSubnet"),
     [string]$ConnectAddress = "",
+    [switch]$RepairOnly,
     [switch]$SkipFirewall,
     [switch]$SkipVerify
 )
@@ -234,6 +235,20 @@ function Get-PortProxyEntries {
     return $map
 }
 
+function Get-PortListenerState {
+    param([string]$Address, [int]$Port)
+    $network = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties()
+    $listeners = @($network.GetActiveTcpListeners() | Where-Object {
+        $_.Port -eq $Port -and ($_.Address.ToString() -eq $Address -or $_.Address.ToString() -eq '0.0.0.0')
+    })
+    $connections = @($network.GetActiveTcpConnections() | Where-Object {
+        $_.LocalEndPoint.Port -eq $Port -and
+        ($_.LocalEndPoint.Address.ToString() -eq $Address -or $Address -eq '0.0.0.0') -and
+        $_.State.ToString() -notin @('Closed', 'TimeWait', 'Listen')
+    })
+    return [pscustomobject]@{ listening = ($listeners.Count -gt 0); active_connections = $connections.Count }
+}
+
 if (-not (Test-IsAdministrator)) {
     throw "Administrator privileges are required."
 }
@@ -289,7 +304,7 @@ $portMappings = @(
 # 발생했고, 서로 다른 시각에 뜬 러너 프로세스들이 **모두 같은 벽시계 위상**(:04/:09/:14…)에서
 # 끊겼다. 브라우저처럼 짧은 요청은 재시도로 가려지지만, 오래 유지되는 연결은 그대로 드러난다.
 #
-# 그래서 **원하는 매핑이 이미 그대로면 아무것도 하지 않는다.** 이 스크립트의 목적은 WSL 재부팅
+# 그래서 **원하는 매핑과 실제 리스너가 모두 정상이면 아무것도 하지 않는다.** 이 스크립트의 목적은 WSL 재부팅
 # 으로 바뀐 IP 를 따라가는 것이지 매번 리스너를 새로 세우는 것이 아니다 — 목적은 유지하면서
 # 부작용만 없앤다.
 #
@@ -307,6 +322,9 @@ $portMappings = @(
 #   결과가 JSON 에 남으므로 그 창에 빠졌는지는 사후에 판별할 수 있다.
 $existingProxies = Get-PortProxyEntries
 $proxyStateKnown = ($null -ne $existingProxies)
+if ($RepairOnly -and (-not $proxyStateKnown -or -not $SkipFirewall -or $LegacyListenPorts.Count -gt 0)) {
+    throw "RepairOnly requires known mappings, SkipFirewall, and no legacy ports."
+}
 
 $legacyPortsToRemove = @($LegacyListenPorts | Where-Object { $_ -notin @($HttpListenPort, $HttpsListenPort) })
 $legacyPortsDeleted = New-Object System.Collections.Generic.List[int]
@@ -343,15 +361,25 @@ foreach ($mapping in $portMappings) {
     $mappingKey = "{0}:{1}" -f $ListenAddress, $mapping.listen_port
     $desiredTarget = "{0}:{1}" -f $ConnectAddress, $mapping.listen_port
 
-    if ($proxyStateKnown -and $existingProxies.ContainsKey($mappingKey) -and
-        $existingProxies[$mappingKey] -eq $desiredTarget) {
-        # 이미 원하는 그대로다 — 기존 연결을 살려 둔다.
-        $portActions[[string]$mapping.listen_port] = "unchanged"
-        continue
+    $mappingMatches = $proxyStateKnown -and $existingProxies.ContainsKey($mappingKey) -and
+        $existingProxies[$mappingKey] -eq $desiredTarget
+    if ($RepairOnly -and -not $mappingMatches) {
+        throw "Mapping changed on $mappingKey; RepairOnly refuses to replace a target."
     }
-
-    $portActions[[string]$mapping.listen_port] =
-        if ($proxyStateKnown -and -not $existingProxies.ContainsKey($mappingKey)) { "created" } else { "recreated" }
+    if ($mappingMatches) {
+        $listener = Get-PortListenerState -Address $ListenAddress -Port $mapping.listen_port
+        if ($listener.listening) {
+            $portActions[[string]$mapping.listen_port] = "unchanged"
+            continue
+        }
+        if ($listener.active_connections -gt 0) {
+            throw "Listener missing on $mappingKey but active connections remain; retry after they drain."
+        }
+        $portActions[[string]$mapping.listen_port] = "recovered"
+    } else {
+        $portActions[[string]$mapping.listen_port] =
+            if ($proxyStateKnown -and -not $existingProxies.ContainsKey($mappingKey)) { "created" } else { "recreated" }
+    }
 
     # 여기서는 지운다. `add` 는 같은 listen 조합이 이미 있으면 실패하므로, 재설정 경로에서는
     # 선삭제가 필요하다(없으면 `-IgnoreExitCode` 로 무해하게 지나간다).
@@ -370,6 +398,15 @@ foreach ($mapping in $portMappings) {
         "connectport=$($mapping.listen_port)",
         "protocol=tcp"
     ) | Out-Null
+
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        $listener = Get-PortListenerState -Address $ListenAddress -Port $mapping.listen_port
+        if ($listener.listening) { break }
+        Start-Sleep -Milliseconds 100
+    }
+    if (-not $listener.listening) {
+        throw "Portproxy registered but listener is still absent on $mappingKey."
+    }
 }
 
 if (-not $SkipFirewall) {
@@ -458,3 +495,9 @@ foreach ($mapping in $portMappings) {
                         ($legacyPortsDeleted.Count -gt 0)
     portproxy = $portProxyText.Trim()
 } | ConvertTo-Json -Depth 6
+
+if (-not $SkipVerify -and @($portResults | Where-Object {
+    $_.verify_listen -eq $false -or $_.verify_connect -eq $false
+}).Count -gt 0) {
+    throw "Portproxy connectivity verification failed; see the JSON result above."
+}

@@ -1,0 +1,25 @@
+{
+    "shortcuts":  [
+                      {
+                          "appid":  "Masangsoft.DQA.Connect",
+                          "path":  "C:\\Users\\mckim\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\DQA Nondisruptive Test\\DQA Nondisruptive Test.lnk",
+                          "target":  "C:\\Users\\mckim\\AppData\\Local\\Temp\\dqa-icon-release-131\\dqa-nondisruptive-icon-final\\installed\\DQALauncher.exe",
+                          "icon":  "C:\\Users\\mckim\\AppData\\Local\\Temp\\dqa-icon-release-131\\dqa-nondisruptive-icon-final\\installed\\dqa.ico,0"
+                      },
+                      {
+                          "appid":  "Masangsoft.DQA.Connect",
+                          "path":  "C:\\Users\\mckim\\Desktop\\DQA Nondisruptive Test.lnk",
+                          "target":  "C:\\Users\\mckim\\AppData\\Local\\Temp\\dqa-icon-release-131\\dqa-nondisruptive-icon-final\\installed\\DQALauncher.exe",
+                          "icon":  "C:\\Users\\mckim\\AppData\\Local\\Temp\\dqa-icon-release-131\\dqa-nondisruptive-icon-final\\installed\\dqa.ico,0"
+                      },
+                      {
+                          "appid":  "Masangsoft.DQA.Connect",
+                          "path":  "C:\\Users\\mckim\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\DQA Nondisruptive Test.lnk",
+                          "target":  "C:\\Users\\mckim\\AppData\\Local\\Temp\\dqa-icon-release-131\\dqa-nondisruptive-icon-final\\installed\\DQALauncher.exe",
+                          "icon":  "C:\\Users\\mckim\\AppData\\Local\\Temp\\dqa-icon-release-131\\dqa-nondisruptive-icon-final\\installed\\dqa.ico,0"
+                      }
+                  ],
+    "protocol":  "C:\\Users\\mckim\\AppData\\Local\\Temp\\dqa-icon-release-131\\dqa-nondisruptive-icon-final\\installed\\dqa.ico,0",
+    "result":  "PASS",
+    "uninstall":  "C:\\Users\\mckim\\AppData\\Local\\Temp\\dqa-icon-release-131\\dqa-nondisruptive-icon-final\\installed\\dqa.ico"
+}
