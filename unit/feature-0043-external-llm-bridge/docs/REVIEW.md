@@ -5313,3 +5313,9 @@ LLM 에게 자기소개를 시키던 축 전체가 이 한 줄로 대체됐다 �
 - Verdict: PASS
 - Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260910T180000-screenshot-backend.md
 - Human Approval Needed: no
+
+## REV-20260910T182400-screenshot-failures-shipping [SUBAGENT:security] — PASS
+
+- 운영 복구 스크립트를 독립 security reviewer가 재검토했다. 경고 전문·말미 확인 없는 삭제 P2를 정확한 suffix/본문 동일성/고정 길이 제거/CAS로 닫고 GET_LOCK으로 중복 실행을 직렬화했다. 최종 PASS, 미해결 P1/P2 0.
+- [security artifact](reviews/20260910T180000-screenshot-security.md), [배포·복구·설치 Run](test-runs.d/20260910-screenshot-failures.md). 기존 backend/QA 제품 코드 PASS 이후 이 commit은 문서·실측 기록만 갱신한다.
+- 실제 설치 앱 요청은 정상 응답했고 한도 오류 화면은 재현되지 않았다. 로그 재생 결과를 라이브 오류 화면 PASS로 기록하지 않는다.

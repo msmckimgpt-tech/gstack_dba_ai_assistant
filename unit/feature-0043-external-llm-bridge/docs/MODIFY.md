@@ -4966,3 +4966,9 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 
 - TASK-20260910-screenshot-failures / REQ-20260910-screenshot-failures: 시작 경고가 실제 종료 사유를 가리는 오류 수정, 세션/health에 사유 보존 및 공통 비밀 마스킹.
 - 첨부13개 중8개가 count5 슬라이스로 누락된 실측에 따라32회 시도·5MiB 공통 예산 및 구체 실패 사유를 도입. direct/worker/bridge 공통 후처리와 기존 audit/step 계약 유지.
+
+## CHG-20260910T182400-screenshot-failures-shipping — 배포·첨부 복구·설치 앱 증거
+
+- 제품 PR #1683 및 main bb1cccbd 전체 배포 결과를 기록했다. 웹2·워커3·MCP2 healthy/RestartCount0, 설치 runner 자동 갱신·해시 일치.
+- 누락8개를 원 답변에 복구하고 기존5개 포함13개 실제 객체 SHA256·크기를 대조했다. 정확한 경고 말미만 CAS로 제거했으며 SQL 첨부 본문을 실행하지 않았다.
+- 설치 DQA13개 첨부 표시와 Claude Opus 합성 요청 왕복을 확인했다. 새 라이브 한도 오류는 발생하지 않아 당시 로그를 설치 bundle에 재생한 회귀와 구분했다. 제품 코드 변경 없는 출하 증거 갱신이다.

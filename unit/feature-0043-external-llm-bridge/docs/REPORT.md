@@ -13,7 +13,10 @@ source_of_truth: true
 - 실제 오류: Claude 주간 한도 초과(stdout), 초기화 Sep13 3pm Asia/Seoul. 반복된 startup permission 경고(stderr)가 사유를 가렸다. 두 채널의 실패 분류·세션 plain fallback·health reason·등록 비밀값 마스킹을 수정했다. Claude 설정/사용 한도 자체는 변경하지 않는다.
 - 첨부:13개 중5개만 저장하던 count5를 처리시도32로 조정, 기존 최대5MiB를 명시적 edit/new 공유 예산으로 유지. 실패 원인 표시와 direct 경로 후처리 중복을 해소했다.
 - 전체1889 PASS/1 skipped. security의 DB 조회 증폭/등록 비밀값 노출 P2 두 건 및 QA step 계약 MINOR 한 건을 수정·재검증했다. 정본 Run과 리뷰 artifact 참고.
-- 원본13개/22530bytes 및 기존5개 SHA256 일치 확인. 누락8개를 배포 후 복구한다. 현재 배포/설치 E2E는 미완료다.
+- 출하: PR #1683(제품47d62ef2), 병행 문서 통합 main bb1cccbd를 전체 배포. 웹2·워커3·MCP2 모두 대상 SHA/healthy/RestartCount0,90초 soak PASS. Caddy 18:03–18:11 KST error0(HTTP200 721건/404 1건). 서버 LLM 차단 스모크는 실제 AI 왕복과 구분한다.
+- 설치: DQA1.5.0-1/PID34472의 runner가18:05 자동갱신·ready 복귀. 두 서버와 설치 bundle SHA256 bca92fb72419025533861fae8b65db74d68b2d32b45f7e99c757cd70838a09e3 일치.
+- 복구: 원본13개/22530bytes와 일치하는 누락8개만 원 답변에 저장, 기존5개 불변 및13개 실제 객체 크기·SHA256 검증. 정확한 실패 고지 말미만 CAS로 제거했다. 설치 앱 화면13개 첨부/실패 고지 없음 PASS. SQL 첨부 내용 실행 없음.
+- 설치 DQA 새 합성 요청 t_XZfO3h4BfHeNukqv는 claude/opus/medium,33.689초/delivered=true, 화면 DQA_SCREENSHOT_910_OK PASS. 이 요청은 한도 오류 없이 성공했다. 당시 stdout/stderr를 실제 설치 bundle에 재생해 weekly limit·초기화 시각 보존/permission 경고 제외를 별도 PASS로 확인했고, 새 라이브 한도 오류 화면 재현은 미수행이다. 과거 오류 메시지9307/9309는 기록 그대로 유지한다.
 
 ## TASK-20260910-model-switch — 선택한 모델에 이전 AI 오류가 표시되는 문제
 
