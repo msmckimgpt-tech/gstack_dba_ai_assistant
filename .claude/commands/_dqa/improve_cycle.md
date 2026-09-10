@@ -1,5 +1,5 @@
 ---
-description: improve_listup 가 만든 ROADMAP.md 의 ready 항목을 실제 구현하는 explicit-call·schedulable persona — 인자 없으면 모든 ready 항목을 종속/순차 드레인, 인자 지정 시 단건. 항목당 worktree cycle(cycle-init→구현→verify→cycle-finalize)을 /_template:entry 방식으로 수행
+description: "개선 로드맵에서 구현 준비가 된 항목을 실제로 개발·검증하고, 완료 상태를 갱신합니다. mysql_ai_delegated_dev 전용입니다."
 argument-hint: [initiative-slug 또는 ITEM-id (선택) — 생략 시 드레인 모드: 모든 ready 항목을 종속/순차 구현]
 allowed-tools: Read, Glob, Grep, Bash, Agent, Write, Edit, TodoWrite
 created_by: _dqa pipeline (hand-authored)

@@ -1,6 +1,6 @@
 ---
 name: _dqa-doc_sync
-description: "머지된 작업과 프로젝트 문서(정책문서·wiki·릴리즈노트) 사이의 drift 를 검출·해소하는 cross-cutting 문서 정합 작업. 단일 feature 에 귀속되지 않는 explicit-call·schedulable maintenance persona — 사람이 필요 시 호출하거나 주기 정합으로 예약"
+description: "개발 결과와 문서가 어긋났을 때, 반영된 작업을 기준으로 프로젝트 문서·위키·릴리즈노트를 최신화합니다. mysql_ai_delegated_dev 전용입니다."
 generated_by: codex-environment-install
 managed_body_sha256: 96171858b69c4e333fb4c40c68268c1225e16475b97deb5cf930ffb565410496
 ---

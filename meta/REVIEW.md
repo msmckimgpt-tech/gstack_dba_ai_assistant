@@ -1896,7 +1896,17 @@ Claude/Codex 공존 설치: 원래 Claude 명령·설정·예약은 유지하고
 - Verdict: PASS — reviewed three files and board core three files are byte-identical to independent review/test snapshot. No policy or tool conflict; upstream DQA changes preserved. Previous app test/deployment results are not attributed to the newer app implementation.
 - Artifact: meta/reviews/20260908T-cycle-idempotence.md; docs/improvements/delegation-friction-20260908/verification.json
 - Human Approval Needed: no — current delegated scope; no runtime change in this PR.
+## REV-20260908T062000-skill-descriptions-backend [SUBAGENT:backend-reviewer] — PASS
 
+- Trigger: migration/마이그레이션 installer; shared META-0074 implementation reviewed by template panel.
+- Scope: project-meta
+- Artifact: meta/reviews/20260908-skill-descriptions-backend.md
+
+## REV-20260908T062000-skill-descriptions-qa [SUBAGENT:qa-reviewer] — PASS
+
+- Trigger: migration/마이그레이션 installer; shared META-0074 implementation reviewed by template panel.
+- Scope: project-meta
+- Artifact: meta/reviews/20260908-skill-descriptions-qa.md
 ## REV-20260909T010301-doc-sync-20260909-010301 [SKIPPED:mirror-index-reconciliation] — doc_sync 09-09 META(wiki+정책문서) 정합
 - Related TASK: META-0075-doc-sync-0909
 - Trigger: 53커밋 창(`84bda1ce..2249addf`, 착륙일 전량 2026-09-08) 의 미러·색인 drift

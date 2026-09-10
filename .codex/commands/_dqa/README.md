@@ -1,3 +1,7 @@
+---
+description: "개선 작업의 조사·계획·구현 중 어떤 스킬을 쓸지 정할 때, DQA 스킬별 역할과 산출물을 안내합니다. mysql_ai_delegated_dev 전용입니다."
+---
+
 # `/_dqa` — 지속 개선 파이프라인 (Delegated-dev Quality & Advancement)
 
 현재 제품(사내 DBA AI Assistant)의 **지속 개선**을 발굴 → 정합 review·로드맵화 → 구현의 3단계로 운영하는 skill 묶음. 각 단계는 다음 단계로 **문서 핸드오프**한다(대화 맥락 의존 0).
