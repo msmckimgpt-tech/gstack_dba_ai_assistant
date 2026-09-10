@@ -1,5 +1,5 @@
 ---
-description: 현재 프로젝트를 상세 파악하고 웹+서비스+사용자+내부운영 리서치로 개선사항 후보를 발굴해 RESEARCH 문서로 적재하는 explicit-call 리서치 persona
+description: "제품을 어떻게 개선할지 탐색할 때, 사용자 요구와 관련 서비스·기술을 조사해 근거가 있는 개선 후보를 모읍니다. mysql_ai_delegated_dev 전용입니다."
 argument-hint: [리서치 초점 한 줄 (선택) — 예 "NL→SQL 정확도" / 생략 시 전방위]
 allowed-tools: Read, Glob, Grep, Bash, WebSearch, WebFetch, Agent, Write, Edit, TodoWrite
 created_by: _dqa pipeline (hand-authored)

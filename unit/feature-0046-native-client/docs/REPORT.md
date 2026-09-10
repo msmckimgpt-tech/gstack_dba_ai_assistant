@@ -8,32 +8,32 @@ source_of_truth: true
 
 # Report
 
-## TASK-20260909-nondisruptive-update
+## TASK-20260910-inapp-update
 
-DQA 1.3.0은 현재 앱과 AI 연결을 유지한 채 새 버전을 설치하고, 사용자가 정상 종료한 다음 실행부터 적용한다. 실행 중인 전체 앱·Python을 덮어쓰던 구조를 매번 새 versions 폴더에 설치하는 구조로 바꿨다. payload 실행 검사와 설치 완료 후에만 원자적으로 실행 대상을 교체한다.
+DQA 1.4.0부터 클라이언트가 업데이트 ZIP을 직접 받아 검증하고 새 버전을 준비한다. 별도 설치 프로그램을 실행하지 않으며 현재 앱과 AI 연결을 유지한다. 사용자가 알림 영역 DQA 아이콘을 오른쪽 클릭해 [종료]한 뒤 다시 실행하면 새 버전이 적용된다. 트레이 숨김은 종료가 아니다.
 
-고정 런처를 바로가기·자동시작·스킴이 공유한다. 기존 루트 실행 파일은 rename으로 보존하고 같은 이름에 호환 런처를 배치해 오래된 실행 경로도 유지한다. 새 구조의 이전 슬롯 실행도 활성 슬롯으로 전달한다. 설치 완료 후에는 현재 앱을 다시 열거나 종료하지 않는다. 실패는 현재 앱을 유지하고 알리며, 단순 installer spawn을 성공으로 기록하지 않는다.
+실행 중인 파일 대신 새 버전 폴더에 압축을 풀고 실제 새 실행 파일의 자가검사를 통과한 뒤에만 실행 대상을 원자적으로 전환한다. 설치기와 같은 mutex로 경쟁을 막으며 다운로드 손상·경로 이탈·확장 크기 초과·파일 잠금·검사 실패 시 기존 활성 버전과 작업을 보존한다. 게시기 역시 잠금·동일 버전 불변·게시 직전 해시 대조로 채널과 파일의 불일치를 차단한다.
 
-기존1.2.x 자체 업데이터의 종료 코드는 소급 변경할 수 없다. 최초 전환도 중단 없이 하려면 새 설치기를 직접 실행한다. 그 뒤1.3.0 이상의 업데이트 메뉴는 작업을 유지한다. 창 닫기는 트레이 숨김이므로 새 버전 적용 시점이 아니다. 미서명 자동 적용 기본 off 유지. 실행 중일 수 있는 옛 슬롯을 삭제하지 않아 설치 횟수에 따라 디스크 사용량이 증가한다.
+최초 설치용 Setup은 유지한다. 기존 1.3.x 이하에는 ZIP 갱신 기능이 없어 1.4.0으로 처음 전환할 때만 기존 앱 내 설치기를 한 번 실행한다. 사용자가 별도로 설치파일을 찾을 필요는 없다. 1.2.x에서의 최초 전환은 기존 코드 때문에 재시작되므로 작업을 마친 뒤 진행해야 한다.
 
 ## 검증
 
-- CLI: native 전체617 passed /1 skipped, focused112 passed. 릴리스노트 렌더34개 통과.
-- 독립 리뷰2명: backend/security/QA, UX/design. 최대3회 범위에서 P1/P2 전부 수정 후 번들 PASS. 실제 Windows 수용 판정과 구분한다.
-- Windows: 실제 설치한 DQA의 격리 홈/설치 경로, 제어된 페이지·자식 러너로 8개 설치 시나리오 및 실제 노트 렌더·이전 슬롯 실행 전환 통과. 실제 사용자의 앱/토큰/로그인 저장소는 변경하지 않았다.
-- [최종 실측 원장](test-runs.d/20260909-nondisruptive-update.md)에 성공·실패·미검증 경계를 함께 기록한다.
+- 최신 main ebf5e365의 1.3.1 투명 아이콘·설치기 수정을 통합했다. native 650 PASS / 1 skip 후 빠진 DOM 검사를 의존성 경로를 지정해 PASS: 총 651개 검증. 릴리스노트 34 PASS, ruff·codenav PASS.
+- 독립 backend/security/QA 3회, UX/design 2회 검토 후 P1/P2 0. 동시 게시 경합·게시 검증 불일치·prune 순서 오류를 수정하고 재현 검사로 해소를 확인했다.
+- 실제 Windows 격리 설치본에서 1.4.0→시험용 1.4.1 ZIP 갱신, 앱/러너 PID·draft 유지, 정상 종료 후 같은 프로필로 새 버전 실행을 확인했다. mutex·손상·포인터 잠금 실패도 기존 버전을 보존했다.
+- 실제 WebView2에서 안내 문구를 확인했다. 제어된 페이지·러너 검사이며 사용자 원본 계정의 실제 AI 대화 검증은 아니다.
+- 상세 근거와 한계: [최종 검증 Run](test-runs.d/20260910-inapp-update.md).
 
-## Git 동기화 결과
+## 출하 상태
 
-- worktree: `.worktrees/feature-0046-nondisruptive-update`; branch `ai/codex/feature-0046-nondisruptive-update`.
-- 제품 commit `c039297d`, PR [#1663](https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant/pull/1663) 병합 `2c5d6c66`. pre/post verify PASS. GitHub Actions 실행 결과는 별도로 제공되지 않았다.
-- 1.3.0 공개:26,138,425 bytes, SHA-256 `72f7281575daf58afdf011f2e4d56ac11dde8317d820be7b6156594a22ab24d3`. 실제 HTTPS/프로젝트CA 다운로드가 검증한빌드와일치. [채널 근거](artifacts/20260909-nondisruptive-update/channel.json).
-- 웹 릴리스노트 배포: main제품 `2c5d6c66`, web-a/web-b ready 및90초soak PASS, asset_stamp `aaffca7a36d4` 일치. healthz200·실제서빙노트·KEK주입존재(값비공개) 확인. [배포로그](artifacts/20260909-nondisruptive-update/deploy-web.log).
-- 배포 경고: compose의 임시metadata파일경합이 발생했으나 canonical배포기가 이미지/GIT_COMMIT 실물을 대조해 정상빌드를 확인하고계속했다. web-only이므로 대화스모크/워커교체는 수행하지 않았다.
-- 검증용Windows 앱은전부종료됐음을조회했고 격리설치제거도exit0. 사용자원본설치/앱은변경하지않았다.
-- 후속커밋은출하문서/증적/파일모드만변경하며 배포된제품코드·바이너리는동일하다.
-- 정책 SHA-256: `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2` (worktree 및 main 동일).
-- 이전 기록: [report history](report-history/20260909-before-nondisruptive-update.md).
+- worktree: `.worktrees/feature-0046-inapp-update`; branch: `ai/codex/feature-0046-inapp-update`.
+- 1.4.0 실제 Windows Setup·Update ZIP 빌드를 완료했다. 현재 단계는 병합·웹 배포·공개 채널 게시 전이다. 공개 성공은 후속 출하 Run으로 기록한다.
+- deploy_scope: included. 정책 SHA-256: `a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2`.
+- 이전 동작·출하 이력: [1.3.0 기록](report-history/20260910-before-inapp-update.md), [통합 main 1.3.1 기록](report-history/20260910-main-icon-before-inapp.md).
+
+## 남는 특성
+
+미서명 자동 적용 기본 off와 기존 신뢰 서버/CA를 유지한다. 실행 중일 수 있는 이전 슬롯은 자동 삭제하지 않으므로 반복 갱신 시 디스크 사용량이 증가한다. 앱 제거 시 versions 전체를 정리한다. 준비 완료 뒤 프로세스가 비정상 종료되더라도 다음 실행은 새 버전을 선택한다.
 
 ## TASK-20260910-transparent-icon-release
 
@@ -55,3 +55,7 @@ Scenario: 실제 Windows동결본/격리설치본의 아이콘·업데이트·�
 PR1617 병합 main ebf5e365를 웹2replica에 배포하고 ready·90초 soak를 통과했다. Windows 설치기1.3.1을 공개했으며 public/localhost 양쪽 실제 다운로드의 TLS/bytes/SHA가 검증빌드와 일치한다. 기본 주소 실제 DQA 로그인 화면의 투명 심볼과 작업 표시줄을 확인하고 검증용 앱을 정상 종료했다. 사용자 원본 설치/앱은 변경하지 않았다.
 
 배포 검수에서 발견한 Windows public80/443 리스너 누락은 feature-0006에서 수정했다. 사용자 UAC 승인 후 정본 운영 스크립트와 해당 리스너를 복구했으며 다른 포트·방화벽·서비스 재시작은 변경하지 않았다. [최종 원장](test-runs.d/20260910-transparent-icon-release.md). 웹/클라이언트 제품은 ebf5e365이고 이후 커밋은 운영 스크립트·검증·증적 정합이다. GitHub Actions와 유료 AI 대화는 별도 PASS를 주장하지 않는다.
+
+### 1.4.0 병행 출하와 통합 경계
+
+마감 시 main은 c684d12a(앱 내부 ZIP 갱신1.4.0)로 전진했다. 해당 제품 코드를 그대로 통합했고 1.3.1 아이콘 출하 증적을 병존시켰다. 1.4.0 빌드·공개는 feature-0046-inapp-update 세션이 소유한다. 이 아이콘 세션의 실제 설치 검증은1.3.1이며, 앞 ebf5e365는 아이콘 배포 시점의 commit이다. 이후 cf6c0998 웹에서도 public health를 재확인했고 최신 버전을1.3.1로 되돌려 게시하지 않는다.

@@ -413,3 +413,11 @@ legacy skip 은 순수한 정리 동기였고 실제로 무해해 보였다. 그
 - Verdict: PASS
 - Human Approval Needed: no — 사용자 Windows UAC 승인 및 적용 PASS 완료.
 - 앞 독립 QA/security 승인본 SHA와 운영 배포본 SHA 일치. 실제 대상 포트 복구·다른 매핑 보존·public 다운로드/기본 DQA 검증 PASS. [원장](test-runs.d/20260910-listener-recovery.md).
+
+## REV-20260910T114600-latest-main-integration [SUBAGENT:icon_release_review]
+- Related TASK: TASK-20260910-listener-recovery
+- Timestamp: 2026-09-10T11:46:00+09:00
+- Trigger: backend/QA 최신 제품 보존과 문서 충돌 해소 검토.
+- Verdict: PASS
+- Human Approval Needed: no
+- 고정 c684d12a 대비 native/web src와 native FUNCTION 동일, TASK/REPORT의1.4.0 본문 보존 및1.3.1 증적 병존 확인. 추가 P1/P2 0, 충돌0, diff check PASS.

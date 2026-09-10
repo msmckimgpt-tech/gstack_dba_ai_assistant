@@ -446,3 +446,8 @@ denied`), 비-상승 PowerShell 의 `IsReadOnly=false` 도 거부된다(디렉�
 - Related TASK: TASK-20260910-listener-recovery
 - 설정과 실제 리스너 drift를 검출하여 연결이 없는 누락 포트만 복구한다. RepairOnly로 조회 실패/대상 불일치 시 무변경 중단하고, postcheck와 TCP 실패를 nonzero로 보고한다.
 - 검증/한계: [원장](test-runs.d/20260910-listener-recovery.md). 사용자 UAC 승인 적용·public HTTPS 다운로드·기본 DQA 화면 PASS.
+
+## CHG-20260910T114600-latest-main-integration
+- Timestamp: 2026-09-10T11:46:00+09:00
+- c684d12a의 1.4.0 제품·템플릿 v3.54.3을 통합했다. origin/main 대비 제품 변경은 본 cycle의 Windows portproxy 운영 코드뿐이고 native 변경은 테스트 하네스뿐이다. FUNCTION은 최신1.4.0 계약을 보존한다.
+- 정책 diff는 template_version 한 줄이며 본문 계약은 동일하다. 현재 AGENTS SHA256 21286d42d52a987af6bed233fb5c050b429ddfa77d33b4979fea3acb4a17fdef.

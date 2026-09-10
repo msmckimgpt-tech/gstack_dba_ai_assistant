@@ -148,7 +148,7 @@ def current_release(release_dir: Path | None = None) -> dict | None:
     if not _HEX256_RE.match(digest) or digest != declared:
         return None                       # 퍼블리시 실수를 **여기서** 막는다
 
-    return {
+    result = {
         "version": version,
         "filename": filename,
         "sha256": digest,
@@ -159,6 +159,30 @@ def current_release(release_dir: Path | None = None) -> dict | None:
         #   실행할 파일의 출처를 지목하게 된다(`updater.py` 규율 1).
         "path": DOWNLOAD_PREFIX + filename,
     }
+
+    if "update" in doc:
+        package = doc["update"]
+        if not isinstance(package, dict):
+            return None
+        name = package.get("filename")
+        if name != f"DQAConnect-Update-{version}.zip":
+            return None
+        path = base / name
+        try:
+            if path.resolve().parent != base.resolve() or not path.is_file():
+                return None
+            size = path.stat().st_size
+            if (type(package.get("size")) is not int or package["size"] != size
+                    or not 1_000_000 <= size <= 400 * 1024 * 1024):
+                return None
+        except OSError:
+            return None
+        digest = _digest_of(path)
+        if not digest or digest != package.get("sha256"):
+            return None
+        result["update"] = {"filename": name, "size": size, "sha256": digest,
+                            "path": DOWNLOAD_PREFIX + name}
+    return result
 
 
 def download_url(origin: str, release_dir: Path | None = None) -> str | None:
@@ -218,7 +242,8 @@ def client_download(filename: str):
     from fastapi.responses import FileResponse
 
     rel = current_release()
-    if not rel or filename != rel["filename"]:
+    if not rel or filename not in (rel["filename"],
+                                    rel.get("update", {}).get("filename")):
         # ⚠ 「이름이 규약에 맞는가」가 아니라 「**지금 광고 중인 그것인가**」로 판정한다.
         #   전자만 보면 위 1번(내린 버전 계속 도달)이 그대로 남는다.
         return JSONResponse({"error": "not_found"}, status_code=404)

@@ -9,6 +9,21 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260910T090000-attach-csv-table-deploy (배포 결과 원장 반영, docs-only)
+
+**변경**: `docs/test-runs.d/TASK-20260909T163000-attach-csv-table.md` 에 배포 도달성 블록 append
++ 낡아진 「배포 전」 NOT-RUN 사유를 현재 사실로 갱신 · `docs/TASK.md` Requested Scope 에 배포
+항목 · `docs/REPORT.md` 배포 문장.
+
+**사유**: `bin/deploy-web.sh --web-only` 가 **no-op(멱등)** 으로 끝났다 — 병행 세션이 내 머지
+(`7d78f426`) 이후 HEAD `ebf5e365` 를 먼저 배포했고 그 안에 이 변경이 포함돼 있었다. 그 결과
+직전 cycle 이 커밋한 Run 의 「배포 전이며」 사유가 **사실과 어긋나게 됐다**(§5.6 staleness —
+stale 한 현재상태 기술은 다음 작업자를 오도한다). 배포를 «내가 롤아웃했다» 로 적지 않고
+«이미 도달해 있었고 그것을 확인했다» 로 적는 것이 이 기록의 요점이다.
+
+**영향 범위**: 문서만. 코드·설정·스키마 변경 0.
+
+
 ## CHG-20260909T163000-attach-csv-table (첨부 `.csv`/`.tsv` 표 렌더, Minor §12.3)
 
 **변경**:

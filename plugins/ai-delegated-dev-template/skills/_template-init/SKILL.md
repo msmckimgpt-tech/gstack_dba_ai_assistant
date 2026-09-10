@@ -1,6 +1,6 @@
 ---
 name: ai-delegated-dev-template-init
-description: Use when initializing a copied ai_delegated_dev_template project through Codex.
+description: "템플릿을 복사해 새 프로젝트를 시작할 때, 프로젝트 목적에 맞게 기본 문서와 개발 환경을 설정합니다."
 ---
 
 # AI Delegated Dev Template Init

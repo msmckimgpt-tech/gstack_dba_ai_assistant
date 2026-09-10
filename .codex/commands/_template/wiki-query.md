@@ -1,3 +1,7 @@
+---
+description: "프로젝트 위키에 관해 질문하면, 관련 문서를 찾아 근거와 출처를 담은 답변을 제공합니다."
+---
+
 # /_template:wiki-query (Codex compat shim)
 
 본 파일은 Codex CLI 호환을 위한 shim 입니다. **정본은** [`.claude/commands/_template/wiki-query.md`](../../../.claude/commands/_template/wiki-query.md).

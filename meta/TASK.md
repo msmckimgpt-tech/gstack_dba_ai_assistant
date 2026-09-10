@@ -47,3 +47,14 @@
 - [x] 전달 중 재현한 보존 옵션/삭제 후 본인 board 완료/허위 완료 출력 수정: lifecycle33 PASS·독립6 PASS·deploy quiesce34 PASS·독립 출력6조합. 마지막 보완은 host 도구와 문서이며 배포 앱 소스 변경 없음.
 
 - [x] PR #1618 merge d81325ff, 본 작업 worktree·로컬/원격 브랜치·REGISTRY 정리 완료. 관측된 이미-done 경고와 직접-init의 강제 새 세션 안내를 후속 출력 정합 대상으로 수정; 실제 auth/board core 전이 정책은 유지. 검증은 추가 리뷰와 REPORT 참조.
+
+## META-0074-skill-descriptions — 2026-09-08
+
+- Request: 프로젝트 스킬 설명을 사용 상황과 결과 중심으로 정리.
+- Scope: description-only command/skill/plugin metadata, personas pointer, template v3.54.3 and global wrapper generator.
+- Risk: Minor. User request authorizes implementation and verification; PR creation/merge pending final confirmation.
+- [x] Canonical template-upgrade.sh --apply in isolated worktree; main preserved.
+- [x] Source-description consistency, command bodies/metadata and reinstall verified.
+- [x] Backend/QA reviewed shared implementation; findings fixed, final PASS.
+- [ ] PR creation and merge after user confirmation.
+- Acceptance: descriptions explain when/what; command bodies, permissions and custom wrappers preserved.

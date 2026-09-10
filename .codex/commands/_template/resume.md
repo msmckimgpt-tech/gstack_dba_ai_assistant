@@ -1,3 +1,7 @@
+---
+description: "중단한 작업을 이어갈 때, 이전 대화와 현재 작업 상태를 확인해 남은 작업을 재개합니다."
+---
+
 # /_template:resume (Codex compat shim)
 
 본 파일은 Codex CLI 호환을 위한 shim 입니다. **정본은** [`.claude/commands/_template/resume.md`](../../../.claude/commands/_template/resume.md).

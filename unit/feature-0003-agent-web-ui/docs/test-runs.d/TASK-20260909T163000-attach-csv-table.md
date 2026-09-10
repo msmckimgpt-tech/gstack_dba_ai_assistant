@@ -70,10 +70,13 @@ Boundary: **fixture 다.** `/static/app.js` 를 shim(=`attach-diff.js` 가 impor
 Environment: DQA-client
 Result: NOT-RUN
 Scenario: 실제 설치 DQA 앱에서 **실제 계정의 CSV 첨부**를 열어 표 확인
-Reason: 배포 전이며, 위 Run 은 격리 Shell + fixture 응답이다. 실제 첨부를 쓰려면 서비스
-  데이터에 파일을 올려야 하는데 이 변경은 표시 계층이라 그 부수효과가 필요하지 않다.
-  fixture PASS 를 실제 앱 PASS 로 확대하지 않는다.
-Next: 배포 후 열려 있는 DQA 앱에서 CSV 첨부 1건을 열어 격자·머리글 고정·원문 복귀를 확인한다.
+Reason: 위 Run 은 격리 Shell + fixture 응답이다. 배포는 끝났으나(아래 블록) 이 축은 **사용자
+  소유의 실행 중인 앱을 조작해야** 성립한다 — §16.6 (a)(b) 가 「내가 열지 않은 표면은 건드리지
+  않는다」를 요구하므로 수행하지 않는다. 실제 첨부를 새로 올리는 대안도 서비스 데이터를
+  바꾸는데, 이 변경은 표시 계층이라 그 부수효과가 필요하지 않다. **fixture PASS 를 실제 앱
+  PASS 로 확대하지 않는다.**
+Next: 사용자가 앱에서 CSV 첨부를 열면 그 자리에서 확인된다 — 서버가 서빙하는 자산이 곧 앱
+  화면이고, 아래 도달성 블록이 그 자산에 이 변경이 실려 있음을 확인했다.
 
 Environment: DQA-client
 Result: PASS
@@ -82,3 +85,30 @@ Build: **리뷰 반영 최종본** — `app/attach-diff.js` · `css/chat.css` �
 Scenario: 위와 동일 5축 (레이아웃 수정 후 재측정)
 Evidence: `evidence/20260909-attach-csv-table/result.json` **5/5 PASS**, 같은 폴더 캡처 4장이
   이 재실행분이다. 행 번호 열 32px(종전 25px, 두 자리 수용) · 긴 값 두 줄 접힘 · 행 높이 균일.
+
+
+## 배포 — 라이브 도달성 확인 (2026-09-10)
+
+Environment: Server
+Result: PASS
+Build: main `ebf5e365` (PR #1665 `7d78f426` 머지 이후 다른 세션 커밋이 더 쌓인 시점의 HEAD)
+Scenario: `bin/deploy-web.sh --web-only` 실행 → 두 replica·엣지 경유 자산에 이 변경이 실렸는지 대조
+Evidence:
+- `bin/deploy-web.sh --web-only` **exit 0 · no-op(멱등)** — "이미 web `ebf5e365` 배포됨 + edge
+  정상". 병행 세션이 내 머지 이후 HEAD 를 먼저 배포했고 그 안에 이 변경이 포함돼 있다.
+  **내가 새로 롤아웃한 것이 아니다.**
+- 두 replica(`repo-web-a-1`·`repo-web-b-1`) 컨테이너 안:
+  `static/app/attach-diff.js` 의 `parseDelimitedText` **2건**, `static/css/chat.css` 의
+  `attach-source-table` **11건**, `?v=a7922c7f93b1`(placeholder `?v=dev` 아님).
+- **엣지(Caddy) 경유** — `Host: <WEB_PUBLIC_HOST>` 로 `https://127.0.0.1/static/app/attach-diff.js?v=…`
+  에서 `parseDelimitedText` **2건**, `chat.css` 에서 `attach-source-table` **11건**.
+  `/` 의 스탬프도 `app.js?v=a7922c7f93b1` 로 일치.
+- `/livez` `{"status":"ok","git_commit":"ebf5e365",…}` · `/healthz`
+  `{"status":"ok","git_commit":"ebf5e365","mysql_ok":true,"pg_ok":true}`.
+- `/api/ui-release` `{"status":"complete","release":"ebf5e365","asset_stamp":"a7922c7f93b1"}` —
+  열린 앱의 자동 반영(TASK-20260909T140000-deploy-refresh)이 감지하는 완료 신호가 게시된 상태.
+Boundary: **「배포됐다」와 「사용자 화면에 보인다」를 구분한다.** 여기서 확인한 것은 *자산 도달성*
+  (엣지가 새 파일을 서빙한다)이고, 특정 사용자의 열린 앱이 그 자산을 이미 로드했는지는 그 앱의
+  로드 시점에 달렸다 — 이 세션은 사용자 앱을 조작하지 않았으므로 그것을 측정하지 않았다.
+  WSL 에서 `WEB_PUBLIC_HOST` 가 DNS 로 해석되지 않아(`curl` exit 6) 엣지 확인은 Caddy 컨테이너
+  안에서 `Host` 헤더를 실어 수행했다 — 사내 DNS 를 타는 실제 클라이언트 경로와 같지 않다.

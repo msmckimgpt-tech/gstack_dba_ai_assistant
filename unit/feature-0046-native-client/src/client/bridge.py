@@ -359,7 +359,7 @@ class Bridge:
         if result.get("prepared"):
             self.pending_update = None
             try:
-                self._notify("업데이트 설치 완료", result["detail"])
+                self._notify("업데이트 준비 완료", result["detail"])
             except Exception:
                 pass
         return result
@@ -661,7 +661,7 @@ def _confirm_text(action: str, body: dict, bridge: "Bridge | None" = None,
         pending = pending or getattr(bridge, "pending_update", None)
         connected = bool(getattr(bridge, "connected", False))
         if pending is None:
-            return ("업데이트를 설치하려고 합니다.\n"
+            return ("업데이트를 준비하려고 합니다.\n"
                     "받을 버전을 아직 확인하지 못했습니다 — 확인을 먼저 눌러 주세요.\n\n"
                     "직접 요청한 것이 아니라면 [아니요] 를 누르세요.")
         home = getattr(getattr(bridge, "plan", None), "home", None)
