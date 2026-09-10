@@ -14,7 +14,8 @@ source_of_truth: true
 - 수정: runtime/실행 위치 세대별 건강 원장, 요청 model별 실패 스트릭, 같은 호출 템플릿으로 배경 복구, 위치 변경 직전 실행 차단. 명시 선택을 적용할 수 없을 때 이전 AI로 대신 호출하던 별도 경로도 차단하고 자동 오류 안내의 자가 검증 호출도 생략한다.
 - 회귀: 신규15 PASS, 영향받는 집중124 PASS. 기존 full 실행의8 FAIL은 빌드 중 소스 변경1·mock 인터페이스5·변경된 무대체 계약2로 분류해 전건 수정/재검증했다. 최종 전체 **1812 PASS/1 skipped, 실패0**(158.153초).
 - backend/qa 독립 리뷰 최종 PASS(P1/P2 0). 리뷰에서 import 순환/번들 호환·모델 복구 대조·custom 복구 경로를 추가 수정했다.
-- 배포 및 설치 DQA 요청 실측: 진행 중. 실제 앱 PID12344/WebView2 PID32392 확인, 입력란 비어 있음. 원 사용자 대화의 요청은 재전송하지 않는다.
+- 출하: PR #1678/main 1c620a97, web-only 배포 exit0/두 replica ready/90초 soak PASS. 설치 runner는 4f61b1275e8f2194b18d1ee2c97678cb7f5beb6a7dabe3770bbac80f12377d53로 자동 갱신 및 heartbeat 복귀했다.
+- 병행 릴리스 #1679/main 931a543e 통합 후 모델 격리·번들 회귀36 PASS. 현재 서버/설치 runner SHA256 531984cab769f98f2e141e927f1993a44004b37cf1338efa8c1926942a917a9c 일치. 설치 DQA 1.5.0에서 Opus → GPT-6-Astra 전환 후 task `t_BAAHNxS3izL9i7bw`가 codex/gpt-6-astra/medium으로 실행되어 23.427초 뒤 delivered=true, 실제 앱에 `SWITCH_OK_910` 응답 표시 PASS. 원 업무 요청을 재전송하거나 DB/파일을 조회하지 않았다.
 
 
 ## TASK-20260910-effort-contract — 옵션 오류 수정
