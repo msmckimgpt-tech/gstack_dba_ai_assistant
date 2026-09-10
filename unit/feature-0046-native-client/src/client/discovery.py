@@ -27,8 +27,7 @@ def _user_visible(where, user):
 
 
 def locations(on_found=None) -> list[core.RuntimeState]:
-    found = [core.RuntimeState(name=n, path=p) for n in core.RUNTIMES
-             if (p := core.which_runtime(n))]
+    found = [st for name in core.RUNTIMES for st in core.native_runtimes(name)]
     if on_found:
         for st in found: on_found(st)
     if not core._is_windows():
@@ -76,7 +75,9 @@ def state_json(st: core.RuntimeState) -> dict:
     return {"id": st.label, "name": st.name, "where": st.where, "path": st.path,
             "distro": st.distro, "user": st.user, "logged_in": st.logged_in,
             "answers": st.answers, "usable": st.usable, "detail": st.detail,
-            "can_login_here": st.can_login_here, "error_code": st.error_code}
+            "can_login_here": st.can_login_here, "error_code": st.error_code,
+            "source": "chatgpt-desktop" if st.name == "codex" and st.where == "windows"
+            and core._is_desktop_codex_path(st.path) else ""}
 
 
 class DiscoveryCache:
@@ -194,6 +195,11 @@ class DiscoveryCache:
             now = time.time()
             with self.lock:
                 reuse = not force and 0 <= now - self.catalog_at < CATALOG_TTL
+                desktop = core._desktop_codex_path()
+                previous_desktop = next((s.path for s in self.states if s.name == "codex"
+                                         and s.where == "windows" and core._is_desktop_codex_path(s.path)), None)
+                if desktop != previous_desktop:
+                    reuse = False
                 candidates = list(self.states) if reuse else None
                 old = {s.label: s for s in self.states}
                 self.states = []

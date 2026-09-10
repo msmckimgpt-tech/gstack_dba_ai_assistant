@@ -201,7 +201,7 @@ def test_runner_has_no_third_party_imports():
 
     tree = ast.parse(CANON.read_text(encoding="utf-8"))
     stdlib = {
-        "contextlib", "msvcrt", "fcntl",
+        "contextlib", "msvcrt", "fcntl", "stat",
         "argparse", "json", "os", "shlex", "ssl", "subprocess", "sys",
         # 2026-08-28 P0-Z4: AI 가 답한 모델·등급 **값의 모양**을 검사한다
         # (내용이 아니라 모양만 — 어떤 모델이 있는지는 그 AI 의 소관이다).

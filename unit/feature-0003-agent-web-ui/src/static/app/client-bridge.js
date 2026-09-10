@@ -181,6 +181,7 @@ export function primaryRuntime(runtimes) {
 function runtimeKey(r) { return JSON.stringify([r.name,r.where,r.path,r.distro || "",r.user || ""]); }
 
 function locationLabel(r) {
+  if (r.source === "chatgpt-desktop") return "ChatGPT 데스크톱 · Windows";
   return r.where === "wsl" ? ["WSL", r.distro, r.user].filter(Boolean).join(" · ") : "Windows";
 }
 

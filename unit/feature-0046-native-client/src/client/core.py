@@ -41,6 +41,7 @@ import os
 import shutil
 import re
 import ssl
+import stat
 import subprocess
 import sys
 import tempfile
@@ -86,6 +87,49 @@ def _install_dirs() -> list[str]:
             "/usr/local/bin", "/opt/homebrew/bin"]
 
 
+def _desktop_codex_root() -> str | None:
+    if os.name != "nt":
+        return None
+    local = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
+    return os.path.join(local, "OpenAI", "Codex", "bin") if os.path.isabs(local) else None
+
+
+def _is_desktop_codex_path(path: str | None) -> bool:
+    root = _desktop_codex_root()
+    if not root or not path:
+        return False
+    parent, filename = os.path.split(os.path.normcase(os.path.abspath(path)))
+    container, digest = os.path.split(parent)
+    return (container == os.path.normcase(os.path.abspath(root))
+            and re.fullmatch(r"[0-9a-f]{16}", digest) is not None and filename == "codex.exe")
+
+
+def _desktop_codex_path() -> str | None:
+    """ChatGPT 앱이 사용자 폴더에 배치한 CLI. 패키지 원본·자격증명은 건드리지 않는다."""
+    root = _desktop_codex_root()
+    if not root:
+        return None
+    candidates = []
+    try:
+        with os.scandir(root) as entries:
+            for entry in entries:
+                if not re.fullmatch(r"[0-9a-f]{16}", entry.name):
+                    continue
+                try:
+                    folder = entry.stat(follow_symlinks=False)
+                    path = os.path.join(entry.path, "codex.exe")
+                    binary = os.stat(path, follow_symlinks=False)
+                    if (not stat.S_ISDIR(folder.st_mode) or not stat.S_ISREG(binary.st_mode)
+                            or any(getattr(s, "st_file_attributes", 0) & 0x400 for s in (folder, binary))):
+                        continue
+                    candidates.append((folder.st_mtime_ns, entry.name, path))
+                except OSError:
+                    continue
+    except OSError:
+        return None
+    return max(candidates)[2] if candidates else None
+
+
 def which_runtime(name: str) -> str | None:
     """그 CLI 의 실행 파일 경로. PATH → 표준 설치 위치 순.
 
@@ -96,6 +140,8 @@ def which_runtime(name: str) -> str | None:
     if name not in RUNTIMES:
         return None
     found = shutil.which(name)
+    if name == "codex" and _is_desktop_codex_path(found):
+        found = _desktop_codex_path()
     if found and not _is_rejected(found):
         return found
     for d in _install_dirs():
@@ -108,7 +154,7 @@ def which_runtime(name: str) -> str | None:
             p = os.path.join(d, name)
             if os.path.isfile(p) and os.access(p, os.X_OK):
                 return p
-    return None
+    return _desktop_codex_path() if name == "codex" else None
 
 
 def _wsl_exe() -> str:
@@ -209,6 +255,8 @@ class RuntimeState:
         if self.where == "wsl":
             location = " · ".join(filter(None, ("WSL", self.distro, self.user)))
             return f"{self.name} ({location})"
+        if self.name == "codex" and _is_desktop_codex_path(self.path):
+            return "codex (ChatGPT 데스크톱)"
         return self.name
 
     @property
@@ -378,6 +426,21 @@ def verify_answers(st: RuntimeState, timeout: int = _PING_TIMEOUT) -> RuntimeSta
     return st
 
 
+def native_runtimes(name: str) -> list[RuntimeState]:
+    path = which_runtime(name)
+    desktop = _desktop_codex_path() if name == "codex" else None
+    if name == "codex" and _is_desktop_codex_path(path):
+        path = desktop
+    paths = [path, desktop]
+    found, seen = [], set()
+    for path in paths:
+        key = os.path.normcase(os.path.abspath(path)) if path else ""
+        if key and key not in seen:
+            seen.add(key)
+            found.append(RuntimeState(name=name, path=path, where="windows"))
+    return found
+
+
 def discover_runtime(name: str) -> list[RuntimeState]:
     """그 CLI 를 **찾을 수 있는 모든 자리**를 돌려준다(Windows · WSL).
 
@@ -386,10 +449,7 @@ def discover_runtime(name: str) -> list[RuntimeState]:
     한 자리만 보고 멈추면, 그 자리가 하필 못 쓰는 쪽일 때 **쓸 수 있는 것이 있는데도**
     「없다」가 된다(실측에서 정확히 그랬다).
     """
-    found: list[RuntimeState] = []
-    win = which_runtime(name)
-    if win:
-        found.append(RuntimeState(name=name, path=win, where="windows"))
+    found = native_runtimes(name)
     if wsl_available():
         inside = wsl_which(name)
         if inside:
