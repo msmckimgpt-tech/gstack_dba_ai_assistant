@@ -150,7 +150,7 @@ def test_unhealthy_runner_answers_immediately_without_calling_the_ai(
     assert spawned == [], "아픈 러너인데 AI 를 호출했다 — 사용자가 그만큼 기다린다"
     assert ok is False
     assert elapsed < 1.0, f"즉시 답하지 않았다({elapsed:.2f}초)"
-    assert "응답하지 않습니다" in msg and "다시 로그인" in msg, msg[:200]
+    assert "응답하지 않습니다" in msg and "DQA" in msg, msg[:200]
 
 
 def test_fast_fail_schedules_background_recovery(mod, monkeypatch, tmp_path):

@@ -123,3 +123,62 @@ def test_hint_matching_does_not_fire_on_incidental_digits():
     mod = _load_runner()
     msg = mod.describe_cli_failure(1, "", "processed 1401 rows then crashed")
     assert "로그인" not in msg, f"우연한 숫자에 인증 안내가 붙었다: {msg!r}"
+
+
+_WEEKLY_LIMIT = "You've hit your weekly limit · resets Sep 13, 3pm (Asia/Seoul)"
+_PERMISSION_WARNING = (
+    "Permission allow rule (.claude/settings.json): Bash(grep -nEi 'frontmatter.*hook' skills.md) "
+    "has a wildcard before the rest of the command, so it also matches any options inserted at "
+    "that position and approves them without a prompt. Replace that * with the exact value "
+    "you mean, or only use * after the subcommand."
+)
+
+
+def test_weekly_limit_survives_repeated_startup_permission_warnings():
+    mod = _load_runner()
+    msg = mod.describe_cli_failure(1, _WEEKLY_LIMIT, (_PERMISSION_WARNING + "\n") * 2)
+    assert "weekly limit" in msg and "Sep 13, 3pm (Asia/Seoul)" in msg
+    assert "사용 한도" in msg and "DQA" in msg
+    assert "Permission allow rule" not in msg
+
+
+def test_startup_warning_does_not_hide_real_stderr_failure():
+    mod = _load_runner()
+    msg = mod.describe_cli_failure(2, "partial output", _PERMISSION_WARNING + "\nerror: unknown option --bad")
+    assert "unknown option --bad" in msg
+    assert "Permission allow rule" not in msg
+
+
+def test_other_permission_errors_are_not_discarded():
+    mod = _load_runner()
+    msg = mod.describe_cli_failure(1, "partial output", "Permission allow rule is invalid: malformed JSON")
+    assert "malformed JSON" in msg
+
+
+def test_weekly_limit_fastfail_never_prescribes_reauthentication():
+    mod = _load_runner()
+    msg = mod._unhealthy_notice(_WEEKLY_LIMIT)
+    assert "Sep 13, 3pm" in msg and "사용 한도" in msg
+    assert "로그인" not in msg
+
+
+def test_raw_session_failure_keeps_stdout_reason():
+    mod = _load_runner()
+    result = {"kind": "claude"}
+    ok, _ = mod.decode_session_output(result, _WEEKLY_LIMIT, _PERMISSION_WARNING, 1)
+    assert not ok
+    msg = mod.describe_cli_failure(1, result.get("failure_detail", ""), _PERMISSION_WARNING)
+    assert "weekly limit" in msg and "Sep 13, 3pm" in msg
+
+
+def test_registered_secret_and_token_field_are_redacted_in_session_failure():
+    mod = _load_runner()
+    secret = "TEST_ONLY_REGISTERED_CREDENTIAL_12345"  # verify-secret-allow: synthetic redaction fixture
+    mod.register_secret(secret)
+    result = {"kind": "claude"}
+    ok, _ = mod.decode_session_output(result, "authentication failed token=" + secret, "", 1)
+    assert not ok
+    msg = mod.describe_cli_failure(1, result["failure_detail"], "")
+    assert secret not in msg
+    msg = mod.describe_cli_failure(1, "token=UNREGISTERED_TEST_CREDENTIAL", "")
+    assert "UNREGISTERED_TEST_CREDENTIAL" not in msg

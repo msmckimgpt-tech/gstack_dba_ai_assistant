@@ -131,6 +131,7 @@ class _Ops:
     """후처리 정본이 쓰는 원시연산 6종의 stub — 저장·MinIO 없이 조립만 시험한다."""
 
     _ASSISTANT_EDIT_COUNT_CAP = 5
+    _ASSISTANT_ATTACHMENT_TOTAL_SIZE_CAP_BYTES = 5 * 1024 * 1024
 
     def __init__(self, *, edits=(), news=(), skipped=(), persisted=True):
         self._edits, self._news, self._skipped = list(edits), list(news), list(skipped)
@@ -138,14 +139,14 @@ class _Ops:
         self.calls = {"edits": 0, "new": 0, "update": 0, "remaining": None}
 
     def _materialize_assistant_attachment_edits(self, conn, *, account, conversation_id,
-                                                answer, message_id, request, skipped=None):
+                                                answer, message_id, request, skipped=None, budget=None):
         self.calls["edits"] += 1
         if skipped is not None:
             skipped.extend(self._skipped)
         return list(self._edits)
 
     def _materialize_assistant_attachment_new(self, conn, *, account, conversation_id,
-                                              answer, message_id, request, remaining_count):
+                                              answer, message_id, request, remaining_count, skipped=None, budget=None):
         self.calls["new"] += 1
         self.calls["remaining"] = remaining_count
         return list(self._news)

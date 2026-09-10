@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Report
 
+## TASK-20260910-screenshot-failures — 오류 원인 가림·첨부 누락
+
+- 실제 오류: Claude 주간 한도 초과(stdout), 초기화 Sep13 3pm Asia/Seoul. 반복된 startup permission 경고(stderr)가 사유를 가렸다. 두 채널의 실패 분류·세션 plain fallback·health reason·등록 비밀값 마스킹을 수정했다. Claude 설정/사용 한도 자체는 변경하지 않는다.
+- 첨부:13개 중5개만 저장하던 count5를 처리시도32로 조정, 기존 최대5MiB를 명시적 edit/new 공유 예산으로 유지. 실패 원인 표시와 direct 경로 후처리 중복을 해소했다.
+- 전체1889 PASS/1 skipped. security의 DB 조회 증폭/등록 비밀값 노출 P2 두 건 및 QA step 계약 MINOR 한 건을 수정·재검증했다. 정본 Run과 리뷰 artifact 참고.
+- 원본13개/22530bytes 및 기존5개 SHA256 일치 확인. 누락8개를 배포 후 복구한다. 현재 배포/설치 E2E는 미완료다.
+
 ## TASK-20260910-model-switch — 선택한 모델에 이전 AI 오류가 표시되는 문제
 
 - 설치 DQA 로그 대조: 16:42:29.823 `task.dispatch`의 runtime=codex/model=gpt-6-astra/effort=medium은 정확했다. 16:42:30.016 `ai.unhealthy_fastfail`이 Claude session limit을 가져와 실제 Codex 실행을 막았다. 선택 UI·서버 전달 오류가 아니라 전역 건강 상태 공유가 직접 원인이다.

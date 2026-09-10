@@ -5286,3 +5286,30 @@ LLM 에게 자기소개를 시키던 축 전체가 이 한 줄로 대체됐다 �
 - Reason: 출하·설치본 실측 기록만 갱신하는 비정책 문서 변경. 코드 패널은 직전 backend/qa PASS를 유지한다.
 - Trigger: non-policy-doc/비정책 문서 — AGENTS §18.8 표 및 명시 SKIP trace.
 - Timestamp: 2026-09-10T17:20:00+09:00
+
+
+## REV-20260910T180000-screenshot-security [SUBAGENT:security] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260910-screenshot-failures
+- Trigger: auth/인가 및 credential/자격증명 경계
+- Timestamp: 2026-09-10T18:00:00+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260910T180000-screenshot-security.md
+- Human Approval Needed: no
+
+
+## REV-20260910T180000-screenshot-qa [SUBAGENT:qa] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260910-screenshot-failures
+- Trigger: response/응답 및 contract/계약
+- Timestamp: 2026-09-10T18:00:00+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260910T180000-screenshot-qa.md
+- Human Approval Needed: no
+
+
+## REV-20260910T180000-screenshot-backend [SUBAGENT:backend] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260910-screenshot-failures
+- Trigger: response shape/응답 스키마 및 attachment/첨부 저장
+- Timestamp: 2026-09-10T18:00:00+09:00
+- Verdict: PASS
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260910T180000-screenshot-backend.md
+- Human Approval Needed: no

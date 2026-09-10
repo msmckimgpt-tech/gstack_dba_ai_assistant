@@ -6,11 +6,32 @@ edit_policy: rewrite
 source_of_truth: true
 feature_status: in-progress
 feature_status_date: 2026-09-10
-feature_status_note: 모델 전환 시 이전 AI 실패 재사용 차단 및 선택 모델 실행 검증
+feature_status_note: AI 한도 오류 안내 정합과 다중 첨부 누락 복구
 
 ---
 
 # Task
+
+## TASK-20260910-screenshot-failures — 실제 AI 종료 사유와 다중 첨부 전달
+
+### 2.1 Implementation Plan
+
+- 승인 근거: 현재 사용자 스크린샷 이슈 수정 위임. Minor 오류 사유/첨부 저장 정합, 기존 인증·인가·파일당/계정/대화 용량 경계 보존. deploy_scope included.
+- 격리: `.worktrees/feature-0043-screenshot-failures`, `ai/codex/feature-0043-screenshot-failures`, base d3b707a8.
+- 정책: worktree 및 main `AGENTS.md` SHA256 `21286d42d52a987af6bed233fb5c050b429ddfa77d33b4979fea3acb4a17fdef`.
+- 실측: 설치 DQA 1.5.0의 17:37:48/17:39:13 `ai.fail`: stdout weekly limit/reset Sep 13 3pm Asia/Seoul, stderr permission wildcard startup warning. `describe_cli_failure`의 stderr 우선 선택이 실제 사유를 가림.
+- 소유: `src/agent/invoke.py` (`describe_cli_failure`, `_unhealthy_notice`, `_run_cli_cancelable`), `sessions.py` (`decode_session_output`), 관련 회귀. 첨부는 `shared/attachment_write.py`, web `routers/_conv_store.py`, `app.py`, `routers/conversations.py`의 저장/진단 경계 검토 후 확정.
+- 시작 경고와 종료 사유를 분리하고, weekly limit/초기화 시각을 사용자에게 전달한다. 건강 상태와 세션 출력도 같은 원인을 보존한다. 실제 설정 파일·권한 규칙은 수정하지 않는다.
+- 첨부는 현재 5건 절단 경로를 원본 응답으로 대조한다. 다중 소형 파일 전달을 허용하되 기존 최대 5MiB/응답 및 파일당 1MiB·계정/대화 용량을 유지하는 설계를 backend/security 리뷰한다.
+- AC1: stdout `weekly limit ... Sep 13, 3pm (Asia/Seoul)` + 반복 stderr wildcard warning → 사용자 답변에 주간 한도와 원문 초기화 시각, 권한 경고로 실패 원인 대체 0.
+- AC2: 같은 입력의 일반/세션 호출 및 unhealthy fastfail 모두 원인 보존. 실제 stderr fatal error와 비밀 마스킹·오류 길이 상한 유지.
+- AC3: 13개 정상 SQL 블록 → 13개 다운로드 첨부, 누락 0. 개수/합산/파일당 용량 및 타 계정 거절은 명확한 사유와 저장 수로 대조.
+- 복구: 설치 Codex 원본 세션 `01a08a6a-bfd4-7012-ae98-3d8c3dae303d`의13 edit블록/22530bytes 확보. 기존5개 source·SHA256 일치 및 표시 message2719/account10 확인. 배포 후 누락8개만 기존 가드로 저장하고 기존 첨부와 본문을 대조한다(SQL 실행 없음).
+- 검증: 실제 설치 로그 최소 추출, RED/GREEN 회귀, backend/security/qa 독립 리뷰, verify-completion, 병합·배포·설치 runner 자동 갱신, 가능한 설치 DQA 합성 요청.
+- [x] 원인 재현 및 수정
+- [x] 회귀/리뷰 — 전체1889 PASS/1 skipped, 최종 변경 집중 재검증 진행
+- [ ] 병합·배포·설치 검증
+
 
 ## TASK-20260910-model-switch — 모델 변경 후 이전 AI 오류 재사용 차단
 
