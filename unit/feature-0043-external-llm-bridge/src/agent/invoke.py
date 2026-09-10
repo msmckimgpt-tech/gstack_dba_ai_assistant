@@ -6,12 +6,15 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 
 from .sessions import _SESSION_MISSING, decode_session_output, session_command
 import os
 import re
 import shlex
+import ssl
 import subprocess
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -346,6 +349,73 @@ def _with_dqa_network(cmd: list[str], kind: str, base: str | None) -> list[str]:
              "-c", "permissions.dqa-task=" + profile,
              "-c", "features.network_proxy=true"]
     return [*cmd[:-1], *flags, cmd[-1]]
+
+
+def native_codex_tools(kind: str, custom: str | None = None) -> bool:
+    """선택된 native Windows Codex에는 셸 대신 기존 DQA MCP 도구를 연결한다."""
+    if os.name != "nt" or kind != "codex" or custom:
+        return False
+    try:
+        target = _resolve_exe([kind])
+    except OSError:
+        return False  # 실제 실행 단계가 위치 오류를 보고한다.
+    return bool(target) and target[0].replace("\\", "/").rsplit("/", 1)[-1].lower() not in ("wsl", "wsl.exe")
+
+
+def _with_dqa_mcp(cmd: list[str], base: str) -> list[str]:
+    """같은 토큰·서버 인가를 쓰는 읽기 도구만 이번 CLI 호출에 등록한다."""
+    endpoint = urllib.parse.urlsplit(base)
+    if (endpoint.scheme != "https" or not endpoint.hostname or endpoint.username
+            or endpoint.password or endpoint.query or endpoint.fragment):
+        raise ValueError("DQA MCP에는 기존 HTTPS 서비스 주소가 필요합니다.")
+    names = ("get_tool_catalog", "run_read_tool", "read_task_attachment")
+    # 외부 응답·캐시가 승인 목록을 확장할 수 없다. 작업 접수/답변 제출은 러너 소유다.
+    spec = ('{url=' + json.dumps(base.rstrip("/") + "/api/ai/mcp")
+            + ',bearer_token_env_var="BRIDGE_TOKEN",enabled=true,required=true,'
+            + 'startup_timeout_sec=20,tool_timeout_sec=90,default_tools_approval_mode="prompt",'
+            + 'enabled_tools=' + json.dumps(names) + ',tools={'
+            + ','.join(name + '={approval_mode="approve"}' for name in names) + '}}')
+    # 전체 table 교체로 이전 Authorization 헤더·OAuth·stdio 설정이 섞이지 않게 한다.
+    setting = ("mcp_servers.dqa_task=" + spec if _KEEP_MCP
+               else "mcp_servers={dqa_task=" + spec + "}")
+    return [*cmd[:-1], "-c", setting, cmd[-1]]
+
+
+@contextmanager
+def _codex_mcp_ca(env: dict | None, enabled: bool):
+    """자식 MCP의 CA 신뢰를 전달하고 기존 custom CA도 보존한다. 전역 변경 없음."""
+    if not enabled or not env or not env.get("BRIDGE_CA"):
+        yield env
+        return
+    ca = env["BRIDGE_CA"]
+    child = dict(env)
+    # Codex는 CODEX_CA_CERTIFICATE 우선, 없으면 SSL_CERT_FILE을 읽는다.
+    previous = env.get("CODEX_CA_CERTIFICATE") or env.get("SSL_CERT_FILE")
+    if not previous or os.path.abspath(previous) == os.path.abspath(ca):
+        ssl.create_default_context(cafile=ca)  # 읽기 불가/잘못된 CA를 호출 전에 보고한다.
+        child["CODEX_CA_CERTIFICATE"] = ca
+        yield child
+        return
+    # 파일을 그대로 복사하지 않는다. CA 파일에 섞인 private key 등은 전파하지 않는다.
+    certs = set()
+    for path in (previous, ca):
+        ssl.create_default_context(cafile=path)
+        # get_ca_certs()는 CA:false인 명시적 신뢰 앵커를 누락한다. 인증서 블록만
+        # 보존해 기존 pinned server 신뢰도 유지하고 private key는 제외한다.
+        with open(path, encoding="utf-8") as stream:
+            blocks = [m.group(0) for m in re.finditer(
+                r"-----BEGIN (CERTIFICATE|TRUSTED CERTIFICATE)-----[\s\S]+?-----END \1-----",
+                stream.read())]
+        if not blocks:
+            raise ValueError("인증서 PEM 블록을 찾지 못했습니다.")
+        # TRUSTED CERTIFICATE의 목적 제한(aux)도 원문 그대로 보존한다.
+        certs.update(block.strip() + "\n" for block in blocks)
+    with tempfile.TemporaryDirectory(prefix="dqa-codex-ca-") as directory:
+        bundle = os.path.join(directory, "ca.pem")
+        with open(bundle, "w", encoding="ascii") as stream:
+            stream.write("".join(sorted(certs)))
+        child["CODEX_CA_CERTIFICATE"] = bundle
+        yield child
 
 
 def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
@@ -754,7 +824,7 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
                  system: str | None = None,
                  token: str | None = None,
                  api_base: str | None = None, api_ca: str | None = None,
-                 session: dict | None = None) -> tuple[bool, str]:
+                 session: dict | None = None, tool_mcp: bool = False) -> tuple[bool, str]:
     """내 AI 에게 물어 답 문자열을 얻는다. (성공여부, 본문)
 
     `model`·`effort` 는 사용자가 **웹에서 고른 것**이다 (P0-Z3). 유효성은 `runtimes`(이 러너가
@@ -798,6 +868,7 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
         #   명령을 자동으로 고치지는 않는다 — 사용자가 준 것을 우리가 바꾸면 `--cmd` 의 의미가
         #   사라진다. 대신 **말한다**. 조용히 놔두면 그 사용자만 원인 모를 재발을 겪는다.
         _warn_custom_cmd_without_mcp_isolation(argv)
+    tool_mcp = bool(tool_mcp and kind == "codex" and not custom and token and api_base)
     _local = (caps or {}).get(kind) or {}
     if (kind in _RUNTIME_SPECS or _local.get("argv")) and (model or effort):
         cmd = build_cmd(kind, prompt, model, effort, runtimes, _local)
@@ -812,6 +883,8 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
     if token:
         try:
             cmd = _with_dqa_network(cmd, kind, api_base)
+            if tool_mcp:
+                cmd = _with_dqa_mcp(cmd, api_base)
         except (ValueError, UnicodeError):
             return False, "DQA 서비스 주소가 올바르지 않아 AI 연결을 시작하지 못했습니다."
     # 명령줄 상한 (TASK-20260902T140000). Windows 는 32,767자에서 `CreateProcess` 가 거절하고,
@@ -839,14 +912,18 @@ def ask_local_ai(kind: str, argv: list[str], prompt: str, custom: str | None,
     kwargs = {"health_scope": health_scope}
     if session is not None:
         kwargs["session_result"] = session
-    ok, answer = _run_cli_cancelable(cmd, _canceled, cwd=_child_workdir(), env=child_env,
-                                     stdin_text=_stdin_text, **kwargs)
-    if session is not None and answer == _SESSION_MISSING and not _canceled():
-        session.pop("resume", None)
-        log_event("ai.session.recreated", "기존 AI 세션이 없어 대화 기록으로 다시 시작합니다.", runtime=kind)
-        cmd, stdin_text, fit = _fit_cmdline(kind, session_command(fresh_cmd, session), prompt)
-        if fit == "overflow":
-            return False, _CMDLINE_OVERFLOW_MSG
-        return _run_cli_cancelable(cmd, _canceled, cwd=_child_workdir(), env=child_env,
-                                   stdin_text=stdin_text, session_result=session, health_scope=health_scope)
-    return ok, answer
+    try:
+        with _codex_mcp_ca(child_env, tool_mcp) as mcp_env:
+            ok, answer = _run_cli_cancelable(cmd, _canceled, cwd=_child_workdir(), env=mcp_env,
+                                             stdin_text=_stdin_text, **kwargs)
+            if session is not None and answer == _SESSION_MISSING and not _canceled():
+                session.pop("resume", None)
+                log_event("ai.session.recreated", "기존 AI 세션이 없어 대화 기록으로 다시 시작합니다.", runtime=kind)
+                cmd, stdin_text, fit = _fit_cmdline(kind, session_command(fresh_cmd, session), prompt)
+                if fit == "overflow":
+                    return False, _CMDLINE_OVERFLOW_MSG
+                return _run_cli_cancelable(cmd, _canceled, cwd=_child_workdir(), env=mcp_env,
+                                           stdin_text=stdin_text, session_result=session, health_scope=health_scope)
+            return ok, answer
+    except (OSError, ValueError) as exc:
+        return False, "DQA 조사 도구의 인증서 설정을 읽지 못했습니다: " + _scrub(str(exc))[:200]

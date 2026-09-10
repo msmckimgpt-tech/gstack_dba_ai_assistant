@@ -17,7 +17,7 @@ import time
 from .api import Api
 from .discovery import _which_ai
 from .events import _EV_TASK_CANCEL, _EV_TASK_DISPATCH, _EV_TASK_REVIEW, _EV_TASK_SUBMIT_FAIL, _EV_TASK_SUBMIT_OK, _EV_TASK_SUBMIT_REJECT, _EV_TASK_SUBMIT_RETRY, _EV_TASK_UNMET
-from .invoke import CANCELED, ask_local_ai, offered_options, system_channel_fits, system_channel_supported
+from .invoke import CANCELED, ask_local_ai, native_codex_tools, offered_options, system_channel_fits, system_channel_supported
 from .logs import log_event
 from .prompt import annotate_approval_request, compose_prompt, split_glossary, split_title
 from .review import run_self_review
@@ -99,8 +99,10 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
             log_event("task.system_channel.folded",
                       "운영자 지침이 이 운영체제의 명령줄 상한을 넘어 본문으로 전달합니다.",
                       level="WARN", task=task_id, runtime=run_kind, system_chars=len(_sysp))
+        _tool_mcp = claimed.get("kind") != "job" and native_codex_tools(run_kind, custom)
+        _transport = {"tool_transport": "mcp"} if _tool_mcp else {}
         prompt = compose_prompt(api, {**claimed, "task_id": task_id},
-                                system_channel=_use_sys_channel)
+                                system_channel=_use_sys_channel, **_transport)
         # 이 질문 한 건의 **일생**을 같은 키(`task`)로 묶는다 (TASK-20260901T163000). 동시 처리에서
         # 줄이 인터리브되어도 `task=` 로 걸러내면 한 건의 흐름이 그대로 복원되고, 그 키는 서버
         # DB(`BridgeTasks.TaskId`)·웹 화면과도 같은 값이라 3자 대조가 된다.
@@ -133,7 +135,8 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
                                       caps=caps,
                                       system=(_sysp if _use_sys_channel else None),
                                       token=api.token, api_base=api.base, api_ca=api.ca,
-                                      session=(binding.result if binding else None))
+                                      session=(binding.result if binding else None),
+                                      **({"tool_mcp": True} if _tool_mcp else {}))
         if answer == CANCELED:
             # 사용자가 취소했다. **제출하지 않는다** — 서버도 409 로 거절하지만, 여기서 멈추는 것이
             # 토큰과 왕복을 아끼는 지점이다.

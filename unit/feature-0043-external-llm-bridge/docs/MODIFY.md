@@ -4972,3 +4972,11 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 - 제품 PR #1683 및 main bb1cccbd 전체 배포 결과를 기록했다. 웹2·워커3·MCP2 healthy/RestartCount0, 설치 runner 자동 갱신·해시 일치.
 - 누락8개를 원 답변에 복구하고 기존5개 포함13개 실제 객체 SHA256·크기를 대조했다. 정확한 경고 말미만 CAS로 제거했으며 SQL 첨부 본문을 실행하지 않았다.
 - 설치 DQA13개 첨부 표시와 Claude Opus 합성 요청 왕복을 확인했다. 새 라이브 한도 오류는 발생하지 않아 당시 로그를 설치 bundle에 재생한 회귀와 구분했다. 제품 코드 변경 없는 출하 증거 갱신이다.
+
+## CHG-20260910T192600-windows-tool-access — Windows Codex 조사 연결
+
+- Related TASK: TASK-20260910-windows-tool-access
+- REQ: REQ-20260910-windows-tool-access
+- Minor: 기존 읽기 API의 native MCP 전송, 서버 인증·인가 변경 없음.
+- handler와 prompt의 native/WSL 판정을 일치시키고 현재 토큰·CA를 호출별 MCP 설정으로 전달한다. 같은 이름의 과거 설정 혼합을 막고 catalog/read/attachment만 노출한다. 세션 재개와 CA 임시 파일 수명도 같은 호출 범위로 유지한다.
+- 첨부 식별자/파일명·토큰 비노출·초기화 실패·읽기 sandbox·병렬 CA 및 pinned cert 보존 회귀를 추가했다. 상세 결과는 test-runs.d/20260910-windows-tool-access.md.

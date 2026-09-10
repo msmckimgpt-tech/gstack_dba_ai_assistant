@@ -56,11 +56,15 @@
                         설치를 하지 않는다. 남기는 것은 `~/.dqa-connect/` 안의 넷뿐 —
                         `config.json`(0600, **토큰 없음**) · 빈 폴더 `work` · `bridge.log` ·
                         `bridge.events.jsonl`(0600) → `save_conf`·`_log_dir`.
+    Windows Codex      native 실행의 조사는 같은 서버 `/api/ai/mcp`의 읽기 도구 3종으로
+                        전달한다. 셸 실행에 의존하지 않으며 현재 토큰은 자식 환경에만 넣는다.
+                        연결 실패 시 다른 자격증명이나 셸로 재시도하지 않는다.
+                        → `_with_dqa_mcp` · `_codex_mcp_ca`.
     나가는 곳           `--base` 주소의 `/api/ai/tools/*` (→ `Api.call`) 와
                         `/api/ai/bridge_heartbeat` (→ `Api.heartbeat`, 30초마다 1회 —
                         본문은 이 머신에서 **쓸 수 있는 런타임·모델 이름 목록**뿐이다.
                         경로·버전·설정 파일 내용은 싣지 않는다 → `detect_runtimes`).
-                        URL 을 만드는 자리는 `Api._post` **하나뿐**이다 — 로컬 LLM
+                        MCP URL은 `_with_dqa_mcp`가 같은 `--base`에서 만든다. 로컬 LLM
                         HTTP 어댑터는 제거됐다(2026-09-01, 사용자 결정: 로컬 LLM 미사용).
     관측·종료           하는 일은 전부 로그에 남는다 — 사람이 읽는 줄(stderr·`bridge.log`)과
                         기계가 읽는 사건 원장(한 줄 = 한 사건: 코드·심각도·질문 id·소요·예외

@@ -6,11 +6,30 @@ edit_policy: rewrite
 source_of_truth: true
 feature_status: in-progress
 feature_status_date: 2026-09-10
-feature_status_note: AI 한도 오류 안내 정합과 다중 첨부 누락 복구
+feature_status_note: 외부 Windows Codex 조사 연결 수정 검증 및 출하
 
 ---
 
 # Task
+
+## TASK-20260910-windows-tool-access — 외부 Windows Codex 조사 경로 복구
+
+### 2.1 Implementation Plan
+
+- 승인: 현재 사용자 `jgkim2` 외부 머신 오류 해결 위임. Minor: 기존 DQA 읽기 도구의 전송 경로 변경; 계정/task 서버 인가·파일/네트워크 sandbox 유지, 전역 CLI 설정 변경 없음. FIRST_REQUEST deploy_scope included.
+- 근거: account27/task `t_GXzGR8J9ufgd3AaK`, 2026-09-10 18:48:09→18:52:30 KST, codex/gpt-5.6-sol/high. 답변에 CreateProcess blocked by policy. 서버 접수/제출 정상, Windows runner bca92fb72419. 원격 PC의 CLI 원본 로그는 미보유; 관리 정책 원인은 미확정.
+- 격리: `.worktrees/feature-0043-windows-tool-access`, `ai/codex/feature-0043-windows-tool-access`, base6a7648b9. 정책 main/worktree SHA256 `21286d42d52a987af6bed233fb5c050b429ddfa77d33b4979fea3acb4a17fdef`.
+- 소유: `src/agent/invoke.py::{native_codex_tools,_with_dqa_mcp,_codex_mcp_ca,ask_local_ai}`, `handler.py::handle_one`, `prompt.py::compose_prompt`, 관련 회귀/기능 문서.
+- Windows native Codex만 동일 서비스 `/api/ai/mcp`와 환경변수 토큰을 현재 호출에 등록한다. 세 도구(get_tool_catalog/run_read_tool/read_task_attachment)만 노출하며 새 task/claim/submit은 러너가 담당한다. 해당 읽기 도구 승인만 현재 호출에 명시하며 managed 거절은 완화하지 않는다.
+- DQA CA는 자식 전용 CODEX_CA_CERTIFICATE에 전달한다. 기존 사용자 custom CA가 있으면 인증서만 임시 bundle로 합쳐 보존한다. 전역 설정/토큰 파일에는 쓰지 않는다. 초기화 실패 시 무제한 권한·셸로 재시도하지 않는다.
+- 프롬프트도 같은 판정으로 MCP 사용을 안내한다. tc- 표식은 내부 혼입 감지 표식이며 게임 계정 값으로 해석하지 않는다.
+- AC1: local shell 실행이 차단된 native Codex에서도 DQA catalog/read 도구 호출과 검증 가능한 응답이 도착한다. 잘못된 토큰은 실제401, 다른 계정 task는 거절된다.
+- AC2: 관리 MCP deny/잘못된 CA/연결 실패는 성공으로 기록하지 않고 정책 제거·셸 대체0. 토큰 argv/prompt/log 노출0, 동일 이름의 과거 MCP 설정 혼합0.
+- AC3: Claude/custom/Windows→WSL 기존 경로·모델·추론·세션 재개 유지. 병렬 작업 CA/토큰이 섞이지 않는다.
+- 검증: RED/GREEN 집중회귀, 실제 Windows CLI→MCP 요청·CA/권한 음성대조, security/backend/qa 제품 독립패널(최대3회, 마지막 P1=0) 및 신규 실기동 하네스 결함의 수정 확인1회, verify-completion, 배포본/외부 heartbeat 확인. jgkim2 PC UI 직접 제어/원본 재요청은 별도 관측으로 기록한다.
+- [x] 제품 구현·회귀 — 전체2199 PASS/1 skipped, 최종 집중77 PASS
+- [x] 독립 검토 종결 — QA 신규 실기동 하네스 인자 누락을 수정. 실제 실행 단정 후 fixture30.66초/원격17.76초 PASS, §18.8(a) 수정 확인1회에서 P1=0 확인.
+- [ ] 배포·도구 호출 검증·외부 수신 확인
 
 ## TASK-20260910-screenshot-failures — 실제 AI 종료 사유와 다중 첨부 전달
 

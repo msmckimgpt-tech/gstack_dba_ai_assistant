@@ -5319,3 +5319,36 @@ LLM 에게 자기소개를 시키던 축 전체가 이 한 줄로 대체됐다 �
 - 운영 복구 스크립트를 독립 security reviewer가 재검토했다. 경고 전문·말미 확인 없는 삭제 P2를 정확한 suffix/본문 동일성/고정 길이 제거/CAS로 닫고 GET_LOCK으로 중복 실행을 직렬화했다. 최종 PASS, 미해결 P1/P2 0.
 - [security artifact](reviews/20260910T180000-screenshot-security.md), [배포·복구·설치 Run](test-runs.d/20260910-screenshot-failures.md). 기존 backend/QA 제품 코드 PASS 이후 이 commit은 문서·실측 기록만 갱신한다.
 - 실제 설치 앱 요청은 정상 응답했고 한도 오류 화면은 재현되지 않았다. 로그 재생 결과를 라이브 오류 화면 PASS로 기록하지 않는다.
+
+## REV-20260910T192600-windows-tool-access-backend [SUBAGENT:backend-reviewer] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260910-windows-tool-access
+- Trigger: native Codex MCP transport
+- Timestamp: 2026-09-10T19:26:00+09:00
+- Verdict: PASS
+- Artifact: [검토](reviews/20260910T192600-windows-tool-access-backend.md)
+- Human Approval Needed: no (코드). 배포는 기존 wrapper FIRST_REQUEST.md deploy_scope included. PR 생성은 현재 사용자 전역 지시의 별도 확인 대상.
+
+## REV-20260910T192600-windows-tool-access-security [SUBAGENT:security-reviewer] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260910-windows-tool-access
+- Trigger: native Codex MCP transport
+- Timestamp: 2026-09-10T19:26:00+09:00
+- Verdict: PASS
+- Artifact: [검토](reviews/20260910T192600-windows-tool-access-security.md)
+- Human Approval Needed: no (코드). 배포는 기존 wrapper FIRST_REQUEST.md deploy_scope included. PR 생성은 현재 사용자 전역 지시의 별도 확인 대상.
+
+## REV-20260910T192600-windows-tool-access-qa [SUBAGENT:qa-reviewer] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260910-windows-tool-access
+- Trigger: native Codex MCP transport
+- Timestamp: 2026-09-10T19:26:00+09:00
+- Verdict: PASS
+- Artifact: [검토](reviews/20260910T192600-windows-tool-access-qa.md)
+- Human Approval Needed: no (코드). 배포는 기존 wrapper FIRST_REQUEST.md deploy_scope included. PR 생성은 현재 사용자 전역 지시의 별도 확인 대상.
+
+## REV-20260910T193800-windows-harness-closure [SUBAGENT:qa-reviewer] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260910-windows-tool-access
+- Trigger: 실기동 검증 도구 argv 재생성
+- Timestamp: 2026-09-10T19:38:00+09:00
+- Verdict: PASS
+- Artifact: [QA 최종 확인](reviews/20260910T192600-windows-tool-access-qa.md)
+- Initial high: model/effort keyword가 shell disable/ephemeral을 누락하여 성공 조건을 잘못 보고함. 실제 실행 인자 단정·argv 보존 후 두 Windows 검증 재실행 PASS. 수정 확인에서 P1=0.
+- Human Approval Needed: no (검증 결함 해결). 외부 FGT 재실행은 미확인.

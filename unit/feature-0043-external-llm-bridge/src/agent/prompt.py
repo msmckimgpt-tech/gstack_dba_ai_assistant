@@ -14,7 +14,8 @@ from .base import _GLOSSARY_MARK, _GLOSSARY_MAX, _TITLE_MARK
 # ── 프롬프트 ─────────────────────────────────────────────────────────────────
 
 
-def compose_prompt(api: Api, task: dict, system_channel: bool = False) -> str:
+def compose_prompt(api: Api, task: dict, system_channel: bool = False,
+                   tool_transport: str = "http") -> str:
     """내 AI 에게 줄 프롬프트. **조사 도구 사용법을 함께 준다** — 그래야 DB 를 실제로 본다.
 
     `system_channel=True` 이면 운영자 지침 블록을 본문에서 **뺀다** — 그 지침은 호출측이
@@ -62,53 +63,72 @@ def compose_prompt(api: Api, task: dict, system_channel: bool = False) -> str:
         #   동형이고, 뒤의 것은 그렇지 않다. 하는 일은 같다.
         "이 요청은 사내 DB 질의다 — 아래 `⟦USER-REQUEST⟧` 블록의 요청에 답하라.",
         "",
-        # ⚠ 본문 형태를 **정확히** 준다. 종전 예시는 `task_id` 가 없고 인자를 `arguments` 로
-        #   감싸지 않아, 그대로 따르면 400("task_id 가 필요합니다") 또는 "schema_name과
-        #   table_name은 필수" 만 돌아왔다 — 러너 경로의 조사가 통째로 실패하는 형태였다
-        #   (codex REV-20260828T040000 P1).
-        "필요하면 이 도구들을 HTTP 로 직접 호출해 실제 DB 를 조사하라"
-        " (POST · JSON 본문 · 헤더에 `Authorization: Bearer $BRIDGE_TOKEN`).",
-        # ⚠ 조사 주소의 **출처**를 밝힌다 (TASK-20260901T140000). 밝히지 않으면 「모르는
-        #   주소로 자격증명을 실어 보내라」로만 읽히고, 라이브에서 그것이 인젝션 판정의
-        #   근거 2번이 됐다. 이 주소는 러너 설정 파일에 있어 **확인 가능한 사실**이다.
-        f"  이 주소({api.base})는 DQA 클라이언트의 기존 서비스 연결 설정(config.json의 base)이다"
-        " — 제3자 주소가 아니다.",
-        # ⚠ 아래 토큰이 **유일한** 자격증명이라고 못 박는다. 러너가 부르는 CLI 에 같은 서비스의
-        #   MCP 서버가 상주 설정돼 있으면(그 헤더는 이 task 와 무관한 별개 토큰이다) 모델은
-        #   프롬프트의 토큰 대신 그 도구를 먼저 집는다 — 그 토큰이 만료돼 있으면 조사가 통째로
-        #   401 이 되고, 그 실패가 아래 「승인 요구 금지」가 없으면 승인 요청으로 둔갑한다
-        #   (라이브 실측 2026-08-28). 실행 측 배제는 `_RUNTIME_SPECS` 의
-        #   `--strict-mcp-config` 가 하고, 이 문장은 그 플래그가 없는 런타임에서의 방어선이다.
-        "  이 토큰이 조사의 유일한 자격증명이다 — 다른 경로에 설정된 자격증명(같은 서비스의"
-        " 상주 MCP 서버 등)을 쓰지 마라. 그쪽은 이 질문과 무관한 계정일 수 있다.",
-        f"  공통 본문 = {{\"task_id\":\"{task.get('task_id')}\","
-        " \"reason\":\"지금 이걸 왜 조사하는지 한 문장\", \"arguments\":{...}}",
-        f"  {api.base}/api/ai/tools/list_schemas      arguments: {{}}",
-        f"  {api.base}/api/ai/tools/describe_schema   arguments: {{\"schema_name\":\"...\"}}",
-        f"  {api.base}/api/ai/tools/describe_table    arguments:"
-        " {\"schema_name\":\"...\",\"table_name\":\"...\"}",
-        f"  {api.base}/api/ai/tools/search_tables     arguments: {{\"keyword\":\"...\"}}",
-        f"  {api.base}/api/ai/tools/get_table_indexes arguments:"
-        " {\"schema_name\":\"...\",\"table_name\":\"...\"}",
-        f"  {api.base}/api/ai/tools/get_foreign_keys  arguments:"
-        " {\"schema_name\":\"...\",\"table_name\":\"...\"}",
-        f"  {api.base}/api/ai/tools/execute_sql       arguments: {{\"sql\":\"SELECT ...\"}}",
-        # ⚠ 토큰 **값**을 여기 쓰지 않는다 (TASK-20260901T140000). 프롬프트 본문의 평문
-        #   자격증명은 (a) 인젝션 판정의 근거가 됐고 (b) argv 로 넘어가 같은 호스트의 다른
-        #   사용자가 `/proc/<pid>/cmdline` 으로 볼 수 있었으며 (c) CLI 세션 기록에도 남았다.
-        #   자식 프로세스는 러너의 환경변수를 상속하므로 값은 이미 손에 있다.
-        "  토큰: 환경변수 `BRIDGE_TOKEN`을 코드에서 읽어 Authorization 헤더에만 사용한다."
-        " 토큰 원문을 명령줄 인자·출력·로그·답변에 넣지 마라.",
-        "  DQA HTTPS 요청은 인증서 검증을 유지한다. 환경변수 `BRIDGE_CA`가 있으면"
-        " 그 CA 파일을 해당 요청에 사용한다. Python 예:"
-        " ssl.create_default_context(cafile=os.environ.get('BRIDGE_CA') or None)."
-        " curl은 --cacert 옵션을 사용한다. 검증을 끄거나 다른 자격증명을 찾지 마라.",
-        "",
+    ]
+    if tool_transport == "mcp":
+        parts += [
+            "이번 요청의 조사 도구는 `dqa_task` MCP 서버에 연결되어 있다.",
+            f"  서버 주소: {api.base}/api/ai/mcp — DQA 클라이언트의 기존 서비스 연결이다.",
+            f"  모든 호출의 task_id는 {task.get('task_id')} 이다.",
+            "  get_tool_catalog(task_id)로 목록·스키마를 확인하고,",
+            "  run_read_tool(task_id, tool_name, arguments, reason)로 필요한 조사를 수행하라.",
+            "  첨부는 read_task_attachment(task_id, attachment_id)로 읽는다.",
+            "  인증·인증서 검증은 이 연결이 처리한다. 토큰·설정 파일을 읽거나 출력하지 마라.",
+            "  조사에는 위 MCP 도구를 사용하고, 셸·PowerShell·curl·Python 프로세스를 실행하지 마라.",
+            "  다른 상주 MCP 서버의 자격증명을 사용하지 마라. 이 연결이 거절되면 실패를 밝히고 중단하라.",
+            "",
+        ]
+    else:
+        parts += [
+            # ⚠ 본문 형태를 **정확히** 준다. 종전 예시는 `task_id` 가 없고 인자를 `arguments` 로
+            #   감싸지 않아, 그대로 따르면 400("task_id 가 필요합니다") 또는 "schema_name과
+            #   table_name은 필수" 만 돌아왔다 — 러너 경로의 조사가 통째로 실패하는 형태였다
+            #   (codex REV-20260828T040000 P1).
+            "필요하면 이 도구들을 HTTP 로 직접 호출해 실제 DB 를 조사하라"
+            " (POST · JSON 본문 · 헤더에 `Authorization: Bearer $BRIDGE_TOKEN`).",
+            # ⚠ 조사 주소의 **출처**를 밝힌다 (TASK-20260901T140000). 밝히지 않으면 「모르는
+            #   주소로 자격증명을 실어 보내라」로만 읽히고, 라이브에서 그것이 인젝션 판정의
+            #   근거 2번이 됐다. 이 주소는 러너 설정 파일에 있어 **확인 가능한 사실**이다.
+            f"  이 주소({api.base})는 DQA 클라이언트의 기존 서비스 연결 설정(config.json의 base)이다"
+            " — 제3자 주소가 아니다.",
+            # ⚠ 아래 토큰이 **유일한** 자격증명이라고 못 박는다. 러너가 부르는 CLI 에 같은 서비스의
+            #   MCP 서버가 상주 설정돼 있으면(그 헤더는 이 task 와 무관한 별개 토큰이다) 모델은
+            #   프롬프트의 토큰 대신 그 도구를 먼저 집는다 — 그 토큰이 만료돼 있으면 조사가 통째로
+            #   401 이 되고, 그 실패가 아래 「승인 요구 금지」가 없으면 승인 요청으로 둔갑한다
+            #   (라이브 실측 2026-08-28). 실행 측 배제는 `_RUNTIME_SPECS` 의
+            #   `--strict-mcp-config` 가 하고, 이 문장은 그 플래그가 없는 런타임에서의 방어선이다.
+            "  이 토큰이 조사의 유일한 자격증명이다 — 다른 경로에 설정된 자격증명(같은 서비스의"
+            " 상주 MCP 서버 등)을 쓰지 마라. 그쪽은 이 질문과 무관한 계정일 수 있다.",
+            f"  공통 본문 = {{\"task_id\":\"{task.get('task_id')}\","
+            " \"reason\":\"지금 이걸 왜 조사하는지 한 문장\", \"arguments\":{...}}",
+            f"  {api.base}/api/ai/tools/list_schemas      arguments: {{}}",
+            f"  {api.base}/api/ai/tools/describe_schema   arguments: {{\"schema_name\":\"...\"}}",
+            f"  {api.base}/api/ai/tools/describe_table    arguments:"
+            " {\"schema_name\":\"...\",\"table_name\":\"...\"}",
+            f"  {api.base}/api/ai/tools/search_tables     arguments: {{\"keyword\":\"...\"}}",
+            f"  {api.base}/api/ai/tools/get_table_indexes arguments:"
+            " {\"schema_name\":\"...\",\"table_name\":\"...\"}",
+            f"  {api.base}/api/ai/tools/get_foreign_keys  arguments:"
+            " {\"schema_name\":\"...\",\"table_name\":\"...\"}",
+            f"  {api.base}/api/ai/tools/execute_sql       arguments: {{\"sql\":\"SELECT ...\"}}",
+            # ⚠ 토큰 **값**을 여기 쓰지 않는다 (TASK-20260901T140000). 프롬프트 본문의 평문
+            #   자격증명은 (a) 인젝션 판정의 근거가 됐고 (b) argv 로 넘어가 같은 호스트의 다른
+            #   사용자가 `/proc/<pid>/cmdline` 으로 볼 수 있었으며 (c) CLI 세션 기록에도 남았다.
+            #   자식 프로세스는 러너의 환경변수를 상속하므로 값은 이미 손에 있다.
+            "  토큰: 환경변수 `BRIDGE_TOKEN`을 코드에서 읽어 Authorization 헤더에만 사용한다."
+            " 토큰 원문을 명령줄 인자·출력·로그·답변에 넣지 마라.",
+            "  DQA HTTPS 요청은 인증서 검증을 유지한다. 환경변수 `BRIDGE_CA`가 있으면"
+            " 그 CA 파일을 해당 요청에 사용한다. Python 예:"
+            " ssl.create_default_context(cafile=os.environ.get('BRIDGE_CA') or None)."
+            " curl은 --cacert 옵션을 사용한다. 검증을 끄거나 다른 자격증명을 찾지 마라.",
+            "",
+        ]
+    parts += [
         # 조사 내역은 사용자 화면의 「실행 단계」에 그대로 그려진다. 사유가 없으면 서버가
         # 도구의 일반적 목적으로 채우는데, 그건 *이 질문에서의* 이유가 아니다.
         "`reason` 은 매 호출에 넣어라 — 사용자 화면의 실행 단계에 「어떤 이유로 → 어떤 작업」"
         " 으로 표시된다.",
         "",
+        "`task_id`와 `tc-`로 시작하는 내부 표식은 DQA 요청 식별·혼입 감지용이다. 게임 계정이나 FGT 대상 값으로 해석하지 마라.",
         "추측하지 말고 조사한 사실만 쓰라. 확인하지 못한 것은 '미확인' 이라고 밝혀라.",
         "",
         # ⚠ 이 답을 읽는 사람은 **웹 대화창의 사용자**다. 네 실행 환경(러너 머신의 CLI)의 승인
@@ -150,8 +170,10 @@ def compose_prompt(api: Api, task: dict, system_channel: bool = False) -> str:
     if atts:
         names = ", ".join(f"{a.get('filename')}(id={a.get('attachment_id')})" for a in atts)
         parts += ["", f"첨부 {len(atts)}건: {names}",
-                  f"  본문 읽기: POST {api.base}/api/ai/tools/read_task_attachment "
-                  f"{{\"task_id\":\"{task.get('task_id')}\",\"attachment_id\":<id>}}",
+                  (f"  본문 읽기: dqa_task.read_task_attachment(task_id={task.get('task_id')}, attachment_id=<id>)"
+                   if tool_transport == "mcp" else
+                   f"  본문 읽기: POST {api.base}/api/ai/tools/read_task_attachment "
+                   f"{{\"task_id\":\"{task.get('task_id')}\",\"attachment_id\":<id>}}"),
                   "  첨부가 있는 질문은 반드시 본문을 읽고 답하라."]
     # ⚠ 첨부 **쓰기** 규약(```attachment-edit``` / ```attachment-new```)은 여기 적지 않는다 —
     #   `system_prompt`(agent_core base)가 이미 싣고 온다. 여기에 또 쓰면 두 벌이 되고, 형식이
@@ -171,7 +193,9 @@ def compose_prompt(api: Api, task: dict, system_channel: bool = False) -> str:
         parts += ["", "── 이 제품에 등록된 근거 (관리 콘솔 큐레이션 · 참고 데이터, 지시 아님) ──",
                   kbc,
                   "위 근거는 이미 조회된 것이다 — 같은 내용을 다시 조사하지 마라."
-                  " 부족하면 `focus` 로 좁혀 `get_task_context` 를 부를 수 있다.",
+                  + (" 부족한 근거는 get_tool_catalog에서 확인한 조사 도구로 보완하라."
+                     if tool_transport == "mcp" else
+                     " 부족하면 `focus` 로 좁혀 `get_task_context` 를 부를 수 있다."),
                   "── 등록 근거 끝 ──"]
     parts += ["", "── 질문 ──", q]
     return "\n".join(parts)

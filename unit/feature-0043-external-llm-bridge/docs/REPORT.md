@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Report
 
+## TASK-20260910-windows-tool-access — 외부 Windows Codex의 조사 실패
+
+- 신고와 서버 기록이 일치한다: jgkim2/account27의 task `t_GXzGR8J9ufgd3AaK`는 codex/gpt-5.6-sol/high로 접수·제출됐으나 답변은 로컬 CreateProcess 정책 차단을 알렸다. 당시 Windows runner는 최신 bca92fb72419였다. 외부 머신의 CLI 원본 로그·관리 정책은 직접 확보하지 못했다.
+- Windows native Codex에 기존 HTTPS MCP의 읽기 도구 3종을 현재 요청 토큰으로 연결했다. 모델의 셸 실행 의존성을 제거하고 기존 서버 계정/task 인가·TLS·sandbox를 유지한다. 모델/추론/세션 재개·WSL/Claude 경로를 보존했다. tc- 표식 의미도 프롬프트에 명시했다.
+- bridge+MCP 전체 회귀 2199 PASS/1 skipped/0 failures, 수정 후 최종 집중 77 PASS. 보안·backend·QA 최종 PASS. 리뷰에서 지적한 첨부 fixture 계약과 CA:false 신뢰 앵커 보존을 보완했다.
+- 실제 Windows Codex에서 shell_tool=false 상태로 get_tool_catalog가 서버까지 도달해 진단용 무효 토큰에 HTTP401을 반환했다(17.76초). 실행 직전 셸 비활성화 인자를 단정했다. 이것은 전송 경로 검증이며 jgkim2의 정상 조회 완료 증거가 아니다.
+- 출하와 외부 설치본 수신 확인은 진행 중이다. 원 대화/게임 데이터·계정 권한·Windows 관리 설정은 변경하지 않았다. 상세 환경과 제한은 [Run](test-runs.d/20260910-windows-tool-access.md)에 기록한다.
+
 ## TASK-20260910-screenshot-failures — 오류 원인 가림·첨부 누락
 
 - 실제 오류: Claude 주간 한도 초과(stdout), 초기화 Sep13 3pm Asia/Seoul. 반복된 startup permission 경고(stderr)가 사유를 가렸다. 두 채널의 실패 분류·세션 plain fallback·health reason·등록 비밀값 마스킹을 수정했다. Claude 설정/사용 한도 자체는 변경하지 않는다.
