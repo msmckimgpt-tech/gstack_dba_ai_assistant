@@ -24,3 +24,7 @@ P1 0, 미해결 P2 0. P2 두 건을 수정 후 재검증했다.
 ### 4. Verdict
 
 PASS. Human Approval Needed: no. 독립 Codex subagent의 최초 검토와 수정 확인 라운드 기록.
+
+## 운영 복구 재검토(18:11 KST)
+
+일회성 recover_attachments.py의 경고 이후 본문 삭제 위험을 지적했다. 정확한 NOTICE endswith·두 본문 동일성·고정 길이 제거·CAS로 수정했다. 같은 DB 연결의 GET_LOCK을 조회/생성 전에 획득해 동시 복구 중복도 차단했다. source 소유권·원문/객체 해시·기존5개 불변 검사를 유지한 최종 코드 읽기 전용 리뷰 PASS. 실제 복구 실행/13개 대조는 주 에이전트가 별도로 수행했다.

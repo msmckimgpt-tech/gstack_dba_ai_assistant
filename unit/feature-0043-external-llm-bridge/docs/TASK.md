@@ -29,8 +29,10 @@ feature_status_note: AI 한도 오류 안내 정합과 다중 첨부 누락 복�
 - 복구: 설치 Codex 원본 세션 `01a08a6a-bfd4-7012-ae98-3d8c3dae303d`의13 edit블록/22530bytes 확보. 기존5개 source·SHA256 일치 및 표시 message2719/account10 확인. 배포 후 누락8개만 기존 가드로 저장하고 기존 첨부와 본문을 대조한다(SQL 실행 없음).
 - 검증: 실제 설치 로그 최소 추출, RED/GREEN 회귀, backend/security/qa 독립 리뷰, verify-completion, 병합·배포·설치 runner 자동 갱신, 가능한 설치 DQA 합성 요청.
 - [x] 원인 재현 및 수정
-- [x] 회귀/리뷰 — 전체1889 PASS/1 skipped, 최종 변경 집중 재검증 진행
-- [ ] 병합·배포·설치 검증
+- [x] 회귀/리뷰 — 전체1889 PASS/1 skipped, 최종 집중72 PASS 및 후속 message_id0 정상/실패·통합34 PASS. backend/security/qa 최종 PASS.
+- [x] 병합·전체 배포·설치 runner 확인 — PR #1683, main bb1cccbd, 웹2/워커3/MCP2 healthy·RestartCount0,90초 soak, 설치/서버 bundle SHA 일치.
+- [x] 원 답변 누락8개 복구 — 기존5개 불변,13개/22530bytes 실제 객체 해시 대조, 복구 후 missing0. 설치 DQA13개 첨부/실패 고지 제거 화면 PASS.
+- [x] 설치 DQA 합성 요청 — claude/opus/medium, task t_XZfO3h4BfHeNukqv,33.689초/delivered=true, DQA_SCREENSHOT_910_OK 표시. 라이브 한도 오류는 재현되지 않았고 당시 로그를 설치 bundle에 재생한 원인 안내 회귀 PASS. 원 SQL 요청 재실행 없음.
 
 
 ## TASK-20260910-model-switch — 모델 변경 후 이전 AI 오류 재사용 차단
