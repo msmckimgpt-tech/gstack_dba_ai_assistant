@@ -35,7 +35,7 @@ from .pool import ActiveTasks, WorkerPool
 from .runtimes import _RUNTIME_SPECS
 from .selfupdate import (SELF_UPDATE_MIN_INTERVAL_SEC, agent_digest,
                          fetch_deployed_agent, install_agent_file, reexec_self)
-from .state import ai_health, note_ai_outcome, note_ai_unusable, note_ai_probing, prev_runner_instance, runner_instance
+from .state import ai_health, ai_health_scope, note_ai_outcome, note_ai_unusable, note_ai_probing, prev_runner_instance, runner_instance
 from .timing import _CAPS_BASELINE_WAIT_SEC, _CAPS_RETRY_BACKOFF_SEC, _CAPS_RETRY_CEILING_SEC, _CAPS_RETRY_CEILING_SHOWING_SEC, _DRAINING_RETRY_FLOOR_SEC, _HEARTBEAT_INTERVAL_SEC, _HEARTBEAT_MIN_INTERVAL_SEC, _HEARTBEAT_NUDGE_POLL_SEC, _RECONNECT_BACKOFF_MAX, _RECONNECT_BACKOFF_START, _SHUTDOWN_GRACE_SEC
 
 # ── 메인 ─────────────────────────────────────────────────────────────────────
@@ -906,19 +906,21 @@ def main() -> int:
                     removed = True
             if removed:
                 rows = list(_client_rows.values())
-                if not rows: note_ai_probing("선택한 위치의 모델을 확인하는 중입니다.")
+
                 _publish_caps(rows, {r["runtime"]: caps[r["runtime"]] for r in rows if r["runtime"] in caps})
             for name, target in targets.items():
                 key = (name, json.dumps(target, sort_keys=True))
                 if name in _client_rows or key in _client_jobs: continue
                 _client_jobs.add(key)
+                scope = ai_health_scope(name)
+                note_ai_probing("선택한 위치의 모델을 확인하는 중입니다.", runtime=scope)
                 if name not in _caps_asked: _caps_asked.append(name)
                 _client_status[name] = {"target": target, "state": "pending"}
                 cached = (caps.get(name) or conf_caps.get(name) or {}) if not args.refresh_caps else {}
                 location = {k: v for k, v in target.items() if k != "selection_id"}
                 if cached.get("client_location") != location: cached = {}
                 _CAPS_NEGOTIATING[0] = True
-                def run(name=name, target=target, key=key, cached=cached, location=location):
+                def run(name=name, target=target, key=key, cached=cached, location=location, scope=scope):
                     failure = None
                     try:
                         got, detail = resolve_caps(name, {name: cached} if cached else None,
@@ -944,9 +946,10 @@ def main() -> int:
                             rows = [r for n, r in _client_rows.items() if r["_client_location"] == active.get(n)]
                             details = {r["runtime"]: caps[r["runtime"]] for r in rows if r["runtime"] in caps}
                             _publish_caps(rows, details)
-                            if rows: note_ai_outcome(True)
-                            elif not any(v.get("state") == "pending" for n, v in _client_status.items() if n != name):
-                                note_ai_unusable("연결된 AI의 모델을 확인하지 못했습니다.")
+                            if row and live:
+                                note_ai_outcome(True, runtime=scope)
+                            else:
+                                note_ai_unusable(why or "연결된 AI의 모델을 확인하지 못했습니다.", runtime=scope)
                             if caps: save_conf(args.base, args.ca, "", args.cmd, caps=caps)
                     except Exception as exc:
                         with _caps_publish_lock:
@@ -1000,7 +1003,7 @@ def main() -> int:
         # 협상에 들어가는 순간부터 **화면은 「확인 중」이어야 한다** (TASK-20260903T200000).
         # 종전에는 이 구간이 「대기 중」(정상)으로 보였고, 그 사이 AI 가 실은 응답 불가여도
         # 사용자는 협상이 끝날 때까지(실측 ~200초) 그 사실을 듣지 못했다.
-        note_ai_probing("연결된 AI 가 답할 수 있는지 확인하는 중입니다.")
+        note_ai_probing("연결된 AI 가 답할 수 있는지 확인하는 중입니다.", runtime=kind)
         _CAPS_NEGOTIATING[0] = True
         try:
             _got, _detail = resolve_caps(args.ai or None, _cached, args.refresh_caps,
@@ -1054,7 +1057,7 @@ def main() -> int:
         # 만료된 claude OAuth → 협상이 돌지 않아 관측 기회가 없었고 화면은 정상이었다.
         #
         # 그래서 짧은 생존 확인 1회로 반드시 `True`/`False` 중 하나로 떨어뜨린다.
-        if ai_health()[0] is None:
+        if ai_health(kind)[0] is None:
             confirm_ai_or_report(kind, list(argv))
 
     def _needs_retry() -> bool:
@@ -1168,7 +1171,7 @@ def main() -> int:
         _log("모델·추론등급은 --cmd 의 명령이 정합니다(웹 선택기는 표시되지 않습니다).")
         # `--cmd` 는 협상을 돌지 않으므로 여기서도 원장이 `None` 으로 남는다. 같은 함수로
         # 떨어뜨린다 — 「확인 중이 영구 상태가 되는 경로」를 하나도 남기지 않기 위함이다.
-        note_ai_probing("연결된 AI 가 답할 수 있는지 확인하는 중입니다.")
+        note_ai_probing("연결된 AI 가 답할 수 있는지 확인하는 중입니다.", runtime=kind)
         threading.Thread(
             target=lambda: confirm_ai_or_report("custom", shlex.split(args.cmd)),
             name="bridge-liveness", daemon=True).start()

@@ -114,7 +114,7 @@ def test_unmet_notice_does_not_claim_failed_answer(runner, monkeypatch, ok, answ
     monkeypatch.setattr(runner, "compose_prompt", lambda *a, **k: "Q")
     monkeypatch.setattr(runner, "ask_local_ai", lambda *a, **k: (ok, answer))
     monkeypatch.setattr(runner, "log_event", lambda *a, **k: None)
-    assert runner.handle_one(api, "test-task", {"requested": {"model": "unavailable"}},
+    assert runner.handle_one(api, "test-task", {"requested": {"reasoning_level": "unavailable"}},
                              "claude", ["claude", "-p", "{prompt}"], None,
                              runtimes=[], self_review=False)
     body = sent[0][0][1]["answer"]
@@ -139,7 +139,7 @@ def test_canceled_answer_is_not_submitted(runner, monkeypatch, before_submit):
     monkeypatch.setattr(runner, "ask_local_ai", lambda *a, **k: ((True, "answer") if before_submit
                                                                     else (False, runner.CANCELED)))
     monkeypatch.setattr(runner, "log_event", lambda *a, **k: None)
-    assert not runner.handle_one(api, "test-task", {"requested": {"model": "unavailable"}},
+    assert not runner.handle_one(api, "test-task", {"requested": {}},
                                  "claude", ["claude", "-p", "{prompt}"], None,
                                  runtimes=[], self_review=False,
                                  cancels=SimpleNamespace(is_canceled=lambda task: before_submit))

@@ -8,6 +8,15 @@ source_of_truth: true
 
 # Report
 
+## TASK-20260910-model-switch — 선택한 모델에 이전 AI 오류가 표시되는 문제
+
+- 설치 DQA 로그 대조: 16:42:29.823 `task.dispatch`의 runtime=codex/model=gpt-6-astra/effort=medium은 정확했다. 16:42:30.016 `ai.unhealthy_fastfail`이 Claude session limit을 가져와 실제 Codex 실행을 막았다. 선택 UI·서버 전달 오류가 아니라 전역 건강 상태 공유가 직접 원인이다.
+- 수정: runtime/실행 위치 세대별 건강 원장, 요청 model별 실패 스트릭, 같은 호출 템플릿으로 배경 복구, 위치 변경 직전 실행 차단. 명시 선택을 적용할 수 없을 때 이전 AI로 대신 호출하던 별도 경로도 차단하고 자동 오류 안내의 자가 검증 호출도 생략한다.
+- 회귀: 신규15 PASS, 영향받는 집중124 PASS. 기존 full 실행의8 FAIL은 빌드 중 소스 변경1·mock 인터페이스5·변경된 무대체 계약2로 분류해 전건 수정/재검증했다. 최종 전체 **1812 PASS/1 skipped, 실패0**(158.153초).
+- backend/qa 독립 리뷰 최종 PASS(P1/P2 0). 리뷰에서 import 순환/번들 호환·모델 복구 대조·custom 복구 경로를 추가 수정했다.
+- 배포 및 설치 DQA 요청 실측: 진행 중. 실제 앱 PID12344/WebView2 PID32392 확인, 입력란 비어 있음. 원 사용자 대화의 요청은 재전송하지 않는다.
+
+
 ## TASK-20260910-effort-contract — 옵션 오류 수정
 
 - 원인 확인: 요청 대화 assistant 9283, Windows DQA의 개별 runner 캐시(`source=verified`, `effort=--reasoning-effort`)와 실행 실패 로그가 일치했다. 공용 캐시는 정상 `--effort`여서 개별 캐시를 보지 않으면 원인을 놓친다. 실제 선택된 Windows Claude 2.1.70의 `--help`도 `--effort low/medium/high`를 제공했다.

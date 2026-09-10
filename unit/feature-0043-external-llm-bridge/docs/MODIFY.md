@@ -4945,3 +4945,13 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 ## CHG-20260910T135000-effort-deploy-evidence
 
 - 같은 사용자 수정 범위의 출하 결과 문서화: PR1675/web9ecd324e 배포와 설치 DQA 자동 갱신·캐시 보정·heartbeat 복귀 증거, 원 쿼리 UI 재요청 미수행 및0건 모집단 한계를 TASK/REPORT/Run/원장에 반영했다. 코드/서빙 산출물 변경 없음.
+
+## CHG-20260910T080000-model-switch — 모델 변경 후 이전 AI 실패 재사용 차단
+
+- Timestamp: 2026-09-10T08:02:17+00:00; Session: codex-model-switch-20260910
+- REQ: REQ-20260910-model-switch
+- `state` 건강 원장을 runtime/실행 위치 세대/모델별로 격리하고 동시 결과 갱신에 잠금을 적용했다.
+- `invoke/caps/lifecycle`의 관측·재협상·복구·실행 경계에 동일 범위를 전달한다. 복구는 원래 모델/custom 명령으로 확인한다.
+- `handler`는 명시 runtime/model 미지원 시 이전 AI를 호출하지 않으며, 생성되지 않은 답의 자가 검증도 호출하지 않는다.
+- 선택 파일 reader는 순환 의존성이 없는 `runtimes`로 이동했다. 패키지 import와 단일 배포 번들을 모두 검증한다.
+- 근거·결과: `test-runs.d/20260910-model-switch.md`.

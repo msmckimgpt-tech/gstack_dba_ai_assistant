@@ -14,7 +14,7 @@ import threading
 import time
 
 from .base import CHILD_TEXT_IO
-from .state import note_ai_outcome, note_ai_probing, note_ai_unusable
+from .state import ai_health_scope, note_ai_outcome, note_ai_probing, note_ai_unusable
 from .discovery import _resolve_exe, _which_ai
 from .logs import _log, log_event
 from .runtimes import _FORBIDDEN_FLAG_FRAGMENTS, _RUNTIME_SPECS, runtime_option_flag
@@ -1399,6 +1399,7 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
     cached = {n: c for n, c in (cached or {}).items()
               if str((c or {}).get("source") or "") in _REPORTABLE_SOURCES}
     present = [n for n in names if _which_ai(n)]
+    health_scopes = {n: ai_health_scope(n) for n in present}
     # 우리 표에 없는 CLI 도 물어본다 (P0-Z4 — "플랫폼에 관계없이"). 호출법을 모르므로 가장
     # 흔한 두 형태를 시도한다: `<cli> -p <프롬프트>` 와 `<cli> <프롬프트>`. 둘 다 실패하면
     # 그 런타임은 신고에서 빠진다(사용자는 `--cmd` 로 직접 줄 수 있다).
@@ -1660,7 +1661,7 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
                 #   2026-09-03 에 닫은 「연결되지 않았는데 정상이라 말한다」의 재생산이다.
                 #   모르면 `None` 으로 남겨 생존 확인이 돌게 한다.
                 if _src in _LIVE_ANSWER_SOURCES:
-                    note_ai_outcome(True)
+                    note_ai_outcome(True, runtime=health_scopes[n])
                 _verified = _src == "verified"
                 # 출처를 있는 그대로 적는다 — 「목록의 출처는 연결된 AI」가 이 기능의 계약이라
                 # 로그가 그것을 거짓으로 진술하면 조사자가 계약 위반을 못 본다(적대리뷰 P2).
@@ -1710,7 +1711,7 @@ def detect_runtimes(only: str | None = None, cached: dict | None = None,
                 # 아무 안내 없이 무한정 기다린다(사용자 지적 2026-09-03).
                 note_ai_unusable(
                     f"이 컴퓨터의 {n} 가 응답하지 않습니다"
-                    + (f" — {_reason}" if _reason else "."))
+                    + (f" — {_reason}" if _reason else "."), runtime=health_scopes[n])
                 _log(f"  {n}: 답을 받지 못했습니다 — 이 런타임은 목록에 나오지 않습니다. "
                      f"({n} 로그인·네트워크 확인 후 `--refresh-caps` 로 다시 시도)")
 
@@ -1925,32 +1926,52 @@ _HEALTH_RECHECK_COOLDOWN_SEC = float(
     os.environ.get("BRIDGE_HEALTH_RECHECK_COOLDOWN_SEC", "") or 60.0)
 
 _HEALTH_RECHECK_LOCK = threading.Lock()
-_HEALTH_RECHECK_AT = [0.0]
+_HEALTH_RECHECK_AT: dict[tuple[str, str, str], float] = {}
+_HEALTH_RECHECK_RUNNING: set[tuple[str, str, str]] = set()
 
 
-def schedule_health_recheck(only: str | None = None) -> bool:
+def schedule_health_recheck(only: str | None = None, *, health_scope=None,
+                            recovery_argv: list | None = None) -> bool:
     """아픈 러너의 회복을 **배경에서** 확인한다. 실제로 띄웠으면 True.
 
     호출측(`invoke.ask_local_ai`)은 이 함수의 결과를 기다리지 않는다 — 기다리면 사용자
     대기 경로로 되돌아온다. 성공하면 `note_ai_outcome(True)` 가 건강 상태를 되돌리고,
     **다음 질문**은 정상 경로(무제한)로 처리된다.
     """
+    scope = ai_health_scope(health_scope if health_scope is not None else only)
+    if scope[2] and recovery_argv is None:
+        return False
     now = time.monotonic()
     with _HEALTH_RECHECK_LOCK:
-        if now - _HEALTH_RECHECK_AT[0] < _HEALTH_RECHECK_COOLDOWN_SEC:
+        if (scope in _HEALTH_RECHECK_RUNNING or
+                now - _HEALTH_RECHECK_AT.get(scope, float("-inf")) < _HEALTH_RECHECK_COOLDOWN_SEC):
             return False
-        _HEALTH_RECHECK_AT[0] = now
+        _HEALTH_RECHECK_AT[scope] = now
+        _HEALTH_RECHECK_RUNNING.add(scope)
 
     def _run() -> None:
         try:
             # 협상 경로를 그대로 재사용한다 — 「응답하는가」를 판정하는 기준이 두 벌이 되면
             # 한쪽은 반드시 낡는다(이 파일이 반복해 지켜 온 규율).
+            if scope[:2] != ai_health_scope(only)[:2]:
+                return
+            if recovery_argv is not None:
+                ok, why = verify_ai_liveness(only, recovery_argv)
+                if ok:
+                    note_ai_outcome(True, runtime=scope)
+                    log_event("caps.health_recovered", "선택한 AI가 다시 응답합니다.", runtime=only)
+                else:
+                    note_ai_unusable(why, runtime=scope)
+                return
             got = detect_runtimes(only, cached=None, probe=True)
             alive = [r for r in got if r.get("source") in _LIVE_ANSWER_SOURCES or
                      (r.get("runtime") in _RUNTIME_SPECS and
                       verify_ai_liveness(r["runtime"], list(_RUNTIME_SPECS[r["runtime"]]["argv"]))[0])]
             if alive:
-                note_ai_outcome(True)
+                for row in alive:
+                    name = row.get("runtime") or row.get("name")
+                    if name == only:
+                        note_ai_outcome(True, runtime=scope)
                 log_event("caps.health_recovered",
                           "연결된 AI 가 다시 응답합니다 — 다음 질문은 정상 처리됩니다.",
                           runtimes=[r.get("runtime") or r.get("name") for r in alive])
@@ -1959,13 +1980,19 @@ def schedule_health_recheck(only: str | None = None) -> bool:
                       "회복 확인이 실패했습니다 — 다음 기회에 다시 확인합니다",
                       level="WARN", exc=exc)
 
+        finally:
+            with _HEALTH_RECHECK_LOCK:
+                _HEALTH_RECHECK_RUNNING.discard(scope)
+
     threading.Thread(target=_run, name="bridge-health-recheck", daemon=True).start()
     return True
 
 
 def reset_health_recheck() -> None:
     """테스트 전용 — 쿨다운이 케이스 간 누수되지 않게."""
-    _HEALTH_RECHECK_AT[0] = 0.0
+    with _HEALTH_RECHECK_LOCK:
+        _HEALTH_RECHECK_AT.clear()
+        _HEALTH_RECHECK_RUNNING.clear()
 
 
 # ── 생존 확인 — 「정상」이라고 말하기 전에 **지금** 답하는지 본다 (TASK-20260903T200000) ──
@@ -2025,13 +2052,14 @@ def confirm_ai_or_report(kind: str, argv: list,
     성공은 `note_ai_outcome(True)`(3상태 `None` → `True`), 실패는 `note_ai_unusable`.
     어느 쪽이든 「모른다」가 남지 않는다 — 그것이 이 함수의 존재 이유다.
     """
+    scope = ai_health_scope(kind)
     ok, why = verify_ai_liveness(kind, argv, timeout)
     if ok:
-        note_ai_outcome(True)
+        note_ai_outcome(True, runtime=scope)
         log_event("caps.liveness_ok", "연결된 AI 가 응답합니다 — 질문을 받을 수 있습니다.",
                   runtime=kind)
         return True
-    note_ai_unusable(why)
+    note_ai_unusable(why, runtime=scope)
     log_event("caps.liveness_fail",
               "연결된 AI 가 응답하지 않습니다 — 화면에 「답할 수 없음」으로 알립니다.",
               level="WARN", runtime=kind, reason=why)

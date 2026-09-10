@@ -47,127 +47,90 @@ def set_runner_instance(current: str, prev: str) -> None:
     _RUNNER_INSTANCE, _PREV_RUNNER_INSTANCE = current, prev
 
 
-# ── AI 사용 가능성 — 관측된 사실로 신고한다 (TASK-20260903T140000) ─────────────
-#
-# ## 무엇이 깨져 있었나 (사용자 지적 2026-09-03)
-#
-# 능력 협상이 실패해도 그 사실은 **모델 선택기를 숨기는 데만** 쓰였다. 「이 러너는 답할 수
-# 없다」로는 취급되지 않았으므로 러너는 질문을 정상 점유했고, 그 뒤 `claude.exe` 가 무한
-# 응답 없음(실측 300초 timeout·출력 0바이트, `oauth/token 400` 반복)이라 **사용자는 아무
-# 안내도 없이 영원히 기다렸다.**
-#
-# 사용자 지적: *"모델을 탐색하는데 실패했다는 사실이 사용자에게는 알려지지 않고 영원히
-# 기다리게 됩니다. 작동에 이슈가 나타난 사실이 해소되지 않았으니 명백한 오류입니다."*
-#
-# ## 무엇을 신고하는가
-#
-# **추측이 아니라 관측**이다 — 이 러너가 실제로 AI 를 부른 결과만 반영한다:
-#
-#   - 능력 협상이 그 런타임에서 실패했다  → 「응답이 없다」의 첫 관측(질문 전에 알 수 있는 유일한 신호)
-#   - 실제 질문 처리가 연속 `_AI_FAIL_STREAK_MAX` 회 실패했다 → 계속 실패한다
-#   - **한 번이라도 성공하면 즉시 복귀한다** — 낡은 판정으로 멀쩡한 러너를 막지 않는다.
-#
-# ## 「게이트」와 「표시」는 다른 축이다 — 한 변수로 합치면 반드시 거짓말이 된다
-#
-# 초판은 이 원장을 `bool` 하나로 두고 초기값을 `True`(fail-open) 로 잡았다. 이유는 게이트
-# 쪽에서는 옳았다 — 「증명될 때까지 불가」로 두면 성공의 근거가 질문 처리뿐이라 첫 질문을
-# 받을 방법이 없어 교착이 된다. 그런데 **같은 값이 하트비트로 화면에 실려 나갔다**. 그래서
-# 러너가 기동해 아직 아무것도 확인하지 못한 구간에도 화면은 「대기 중」(정상)을 띄웠고,
-# 그 순간 AI 가 실은 응답 불가여도 사용자는 그 사실을 능력 협상이 끝날 때까지(실측 ~200초)
-# 듣지 못했다.
-#
-# 사용자 지적(2026-09-03): *"연결되지 않은 상황이 정상 연결되었다고 거짓으로 출력되는
-# 부분을 수정하는 작업입니다. claude 인증 상태는 현상일 뿐입니다."*
-#
-# 그래서 세 값으로 나눈다:
-#
-#   - `None`  = **아직 확인되지 않았다** (기동 직후 · 능력 협상 진행 중)
-#   - `True`  = 실제로 답을 받아냈다 (협상 성공 또는 질문 처리 성공)
-#   - `False` = 못 쓴다는 관측이 있다
-#
-# 두 소비자는 이 세 값을 **다르게** 읽는다:
-#
-#   - 게이트(`ai_blocked`) — 「막아야 하는가」. `None` 은 막지 않는다 (fail-open 유지).
-#   - 표시(`ai_health` → 하트비트 → 칩) — 「정상이라고 말해도 되는가」. `None` 은
-#     정상이 아니다. 「확인 중」으로 나가야 한다.
-#
-# ⚠ `None` 을 `False` 로 접으면 **모든 첫 질문이 막힌다**. `if not ready:` 가 아니라
-#   `if ready is False:` 로 쓴다 — `account_runner_build` 3상태와 같은 규율이다.
+# AI 관측은 런타임과 DQA가 선택한 실행 위치 세대에만 적용한다.
+# None은 미확인(표시상 정상 아님), False만 실행 차단, True는 실제 응답 성공이다.
+import json
+import os
+import threading
 
-#: 연속 실패를 몇 번 보면 「못 쓴다」로 판정할지. 1회는 일시적 오류(순단·한도)일 수 있고,
-#: 그 한 번으로 계정의 질문을 막으면 오탐 비용이 사용자 차단이 된다.
+from .runtimes import client_runtime_selection
+
 _AI_FAIL_STREAK_MAX = 2
-
-#: 3상태. `None` = 아직 확인되지 않았다 (기동 직후). 위 「게이트와 표시」 주석 참조.
-_AI_READY: "bool | None" = None
-_AI_UNREADY_REASON = ""
-_AI_FAIL_STREAK = 0
+_AI_HEALTH_LOCK = threading.RLock()
+_AI_HEALTH: dict[tuple[str, str, str], tuple[bool | None, str, int]] = {}
 
 
-def ai_health() -> "tuple[bool | None, str]":
-    """(정상이라고 말해도 되는가, 사유). **3상태** — `None` 은 「아직 모른다」다.
-
-    ⚠ 반환값을 `bool()` 로 눌러 담지 말 것. 그 한 줄이 「모른다」를 「정상」으로 바꾸어
-      사용자에게 거짓을 표시한 결함의 원인이었다.
-    """
-    return _AI_READY, _AI_UNREADY_REASON
-
-
-def ai_blocked() -> "tuple[bool, str]":
-    """질문 처리를 **막아야 하는가**(그리고 사유).
-
-    표시 축과 갈라 두는 이유는 위 모듈 주석에 있다 — 「모른다」는 막지 않는다.
-    호출부가 `ai_health()` 를 직접 `not` 으로 읽다가 `None` 을 막아버리는 사고를
-    구조적으로 없애기 위해 별도 함수로 낸다.
-    """
-    return (_AI_READY is False), _AI_UNREADY_REASON
+def ai_health_scope(runtime=None, model=None) -> tuple[str, str, str]:
+    """느린 호출 전에 캡처하면 이전 위치의 늦은 결과가 새 위치를 덮지 않는다."""
+    if isinstance(runtime, tuple):
+        return runtime
+    name = str(runtime or "")
+    selected = client_runtime_selection()
+    location = ((selected or {}).get(name) if selected is not None else
+                os.environ.get(f"BRIDGE_AI_PATH_{name.upper()}", ""))
+    return name, json.dumps(location, sort_keys=True, ensure_ascii=True), str(model or "")
 
 
-def note_ai_probing(reason: str = "") -> None:
-    """능력 협상을 **시작했다** — 아직 확인되지 않은 상태로 되돌린다.
+def ai_health(runtime=None) -> tuple[bool | None, str]:
+    """특정 AI의 관측 또는 현재 선택 위치들의 heartbeat 요약."""
+    with _AI_HEALTH_LOCK:
+        if runtime is not None:
+            key = ai_health_scope(runtime)
+            base = _AI_HEALTH.get((*key[:2], ""), (None, "", 0))
+            if key[2] and base[0] is False:
+                return base[:2]
+            return _AI_HEALTH.get(key, base)[:2]
+        selected = client_runtime_selection()
+        if selected is not None:
+            keys = [ai_health_scope(name) for name in selected]
+        else:
+            keys = [key for key in _AI_HEALTH
+                    if key[:2] == ai_health_scope(key[0])[:2]]
+        rows = [_AI_HEALTH.get(key, (None, "", 0)) for key in keys]
+        if any(row[0] is True for row in rows):
+            return True, ""
+        if not rows or any(row[0] is None for row in rows):
+            return None, ""
+        return False, next((row[1] for row in rows if row[1]), "")
 
-    러너가 살아 있는 동안 재협상(`--refresh-caps`)에 들어가면 직전 판정은 낡은 것이다.
-    다만 **이미 `False`(못 쓴다는 관측이 있음) 인 상태는 되돌리지 않는다** — 확인 중이
-    관측을 덮으면 「답할 수 없음」이 협상마다 「확인 중」으로 세탁된다.
-    """
-    global _AI_READY, _AI_UNREADY_REASON
-    if _AI_READY is False:
-        return
-    _AI_READY = None
-    _AI_UNREADY_REASON = str(reason or "").strip()[:300]
+
+def ai_blocked(runtime=None) -> tuple[bool, str]:
+    ready, reason = ai_health(runtime)
+    return ready is False, reason
 
 
-def note_ai_unusable(reason: str) -> None:
-    """질문 **전에** 얻은 관측(능력 협상 실패)으로 곧바로 「못 쓴다」로 표시한다."""
-    global _AI_READY, _AI_UNREADY_REASON
-    _AI_READY = False
-    _AI_UNREADY_REASON = str(reason or "").strip()[:300]
+def note_ai_probing(reason: str = "", *, runtime=None) -> None:
+    key = ai_health_scope(runtime)
+    with _AI_HEALTH_LOCK:
+        ready, old_reason, streak = _AI_HEALTH.get(key, (None, "", 0))
+        if ready is not False:
+            _AI_HEALTH[key] = (None, str(reason or "").strip()[:300], streak)
 
 
-def note_ai_outcome(ok: bool, reason: str = "") -> None:
-    """실제 AI 호출 결과 1건을 반영한다.
+def note_ai_unusable(reason: str, *, runtime=None) -> None:
+    key = ai_health_scope(runtime)
+    with _AI_HEALTH_LOCK:
+        streak = _AI_HEALTH.get(key, (None, "", 0))[2]
+        _AI_HEALTH[key] = (False, str(reason or "").strip()[:300], streak)
 
-    성공은 **즉시** 복귀시킨다(스트릭도 함께 지운다) — 한 번 통하면 그 러너는 쓸 수 있고,
-    낡은 실패 기록으로 계속 막는 것은 사용자에게 거짓이다.
-    """
-    global _AI_READY, _AI_UNREADY_REASON, _AI_FAIL_STREAK
-    if ok:
-        _AI_FAIL_STREAK = 0
-        _AI_READY = True
-        _AI_UNREADY_REASON = ""
-        return
-    _AI_FAIL_STREAK += 1
-    if _AI_FAIL_STREAK >= _AI_FAIL_STREAK_MAX:
-        _AI_READY = False
-        _AI_UNREADY_REASON = str(reason or "").strip()[:300] or "연결된 AI 가 응답하지 않습니다."
+
+def note_ai_outcome(ok: bool, reason: str = "", *, runtime=None) -> None:
+    key = ai_health_scope(runtime)
+    with _AI_HEALTH_LOCK:
+        if ok:
+            _AI_HEALTH[key] = (True, "", 0)
+            if key[2]:
+                _AI_HEALTH[(*key[:2], "")] = (True, "", 0)
+            return
+        ready, old_reason, streak = _AI_HEALTH.get(key, (None, "", 0))
+        streak += 1
+        if streak >= _AI_FAIL_STREAK_MAX:
+            ready = False
+            old_reason = str(reason or "").strip()[:300] or "연결된 AI 가 응답하지 않습니다."
+        _AI_HEALTH[key] = (ready, old_reason, streak)
 
 
 def reset_ai_health() -> None:
-    """테스트 전용 — 프로세스 전역이라 케이스 간 누수를 막는다.
-
-    기동 직후와 **같은** 값(`None` = 아직 확인되지 않음)으로 되돌린다. 여기를 `True` 로
-    두면 테스트가 프로덕션에 없는 「이미 정상」 상태에서 출발해, 지금 고친 결함을
-    테스트가 재현할 수 없게 된다.
-    """
-    global _AI_READY, _AI_UNREADY_REASON, _AI_FAIL_STREAK
-    _AI_READY, _AI_UNREADY_REASON, _AI_FAIL_STREAK = None, "", 0
+    """테스트 전용: 미확인 상태로 초기화."""
+    with _AI_HEALTH_LOCK:
+        _AI_HEALTH.clear()

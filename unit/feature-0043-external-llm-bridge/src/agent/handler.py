@@ -118,13 +118,22 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
             # 사용자가 지우면 사라지고, 같은 계정에 러너가 여럿일 때의 재현 조사는 로그로 한다.
             log_event(_EV_TASK_UNMET, "요청한 지정을 반영하지 못했다", level="WARN",
                       task=task_id, runtime=run_kind, unmet=list(unmet))
-        binding = session_stack.enter_context(conversation_session(api, claimed, run_kind, custom))
-        ok, answer = ask_local_ai(run_kind, run_argv, prompt, custom, _canceled,
-                                  model=want_model, effort=want_effort, runtimes=runtimes,
-                                  caps=caps,
-                                  system=(_sysp if _use_sys_channel else None),
-                                  token=api.token, api_base=api.base, api_ca=api.ca,
-                                  session=(binding.result if binding else None))
+        selection_unavailable = bool(
+            (want_runtime and want_runtime != run_kind)
+            or (want_model and not _model_ok)
+            or (custom and (want_runtime or want_model))
+        )
+        binding = None
+        if selection_unavailable:
+            ok, answer = False, "선택한 AI 또는 모델을 현재 연결에서 사용할 수 없습니다. AI 연결과 모델 선택을 확인한 뒤 다시 보내 주세요."
+        else:
+            binding = session_stack.enter_context(conversation_session(api, claimed, run_kind, custom))
+            ok, answer = ask_local_ai(run_kind, run_argv, prompt, custom, _canceled,
+                                      model=want_model, effort=want_effort, runtimes=runtimes,
+                                      caps=caps,
+                                      system=(_sysp if _use_sys_channel else None),
+                                      token=api.token, api_base=api.base, api_ca=api.ca,
+                                      session=(binding.result if binding else None))
         if answer == CANCELED:
             # 사용자가 취소했다. **제출하지 않는다** — 서버도 409 로 거절하지만, 여기서 멈추는 것이
             # 토큰과 왕복을 아끼는 지점이다.
@@ -202,7 +211,7 @@ def handle_one(api: Api, task_id: str, claimed: dict, kind: str, argv: list[str]
         #   남의 자원이라 우리가 임의로 결정할 축이 아니다. 지금은 **판정을 기록**하고 그
         #   판정을 콘솔이 보이게 하는 데까지다(수정 반복은 별도 결정 사항).
         review = None
-        if self_review:
+        if self_review and generated_answer:
             review = run_self_review(claimed.get("self_review") or {}, answer, run_kind, run_argv,
                                      custom, _canceled, model=want_model, effort=want_effort,
                                      runtimes=runtimes, caps=caps)

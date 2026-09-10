@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import os
+import json
+import re
 
 # ── 내 AI 호출 ───────────────────────────────────────────────────────────────
 
@@ -240,3 +242,33 @@ _WIN_EXEC_EXTS = (".exe", ".com")
 #: 「실행 가능하지는 않지만 실행 파일처럼 이름이 붙는」 확장자. 이름에 이것이 이미 달려
 #: 있으면 `name + ".exe"` 로 늘리지 않고 **그 이름 그대로** 판정한다(아래 `_which` 참조).
 _WIN_KNOWN_EXTS = _WIN_EXEC_EXTS + (".cmd", ".bat", ".ps1")
+
+
+def client_runtime_selection() -> dict | None:
+    """클라이언트가 확인한 위치만 사용한다. 손상된 선택 파일은 자동 탐색으로 우회하지 않는다."""
+    filename = os.environ.get("BRIDGE_RUNTIME_SELECTION")
+    if not filename:
+        return None
+    try:
+        with open(filename, encoding="utf-8") as stream:
+            raw = json.loads(stream.read(262145))
+        if not isinstance(raw, dict):
+            return {}
+        selected = {}
+        for name, row in raw.items():
+            if name not in _RUNTIME_SPECS or not isinstance(row, dict):
+                return {}
+            if row.get("where") not in ("windows", "wsl") or not row.get("path"):
+                return {}
+            for key in ("path", "distro", "user"):
+                value = row.get(key, "")
+                if not isinstance(value, str) or len(value) > 4096 or any(ord(c) < 32 for c in value):
+                    return {}
+            selection_id = row.get("selection_id")
+            if selection_id is not None and (not isinstance(selection_id, str)
+                                              or not re.fullmatch(r"[0-9a-f]{32}", selection_id)):
+                return {}
+            selected[name] = row
+        return selected
+    except (OSError, ValueError):
+        return {}

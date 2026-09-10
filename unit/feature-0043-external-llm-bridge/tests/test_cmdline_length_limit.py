@@ -199,7 +199,7 @@ def test_stdin_verdict_reaches_the_spawn_call(mod, monkeypatch, win_budget):
     """`stdin` 판정이 실제 실행 인자로 전달되는가 — 판정과 실행이 갈리지 않게."""
     seen = {}
 
-    def _fake(cmd, cancel_check, cwd=None, env=None, stdin_text=None, timeout_sec=None):
+    def _fake(cmd, cancel_check, cwd=None, env=None, stdin_text=None, timeout_sec=None, health_scope=None):
         seen["cmd"] = cmd
         seen["stdin_text"] = stdin_text
         return True, "ok"
