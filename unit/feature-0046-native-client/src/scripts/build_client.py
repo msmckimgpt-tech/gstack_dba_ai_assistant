@@ -156,7 +156,7 @@ def verify_runtime_runs_runner(python_exe: Path) -> None:
     """
     # ⚠ 러너가 임포트하는 것과 **함께** 움직인다 — `tests/test_packaging.py` 가 러너
     #   소스와 대조한다. 2026-09-04: WSL 탐지가 `shutil` 을 더했다.
-    runner_mods = ("argparse", "ast", "atexit", "contextlib", "hashlib", "json", "os", "re", "secrets",
+    runner_mods = ("argparse", "ast", "atexit", "contextlib", "hashlib", "json", "os", "re", "secrets", "stat",
                    "shlex", "shutil", "signal", "ssl", "subprocess", "sys", "tempfile",
                    "threading", "time", "traceback", "urllib.request")
     platform_mods = {"nt": "msvcrt", "posix": "fcntl"}

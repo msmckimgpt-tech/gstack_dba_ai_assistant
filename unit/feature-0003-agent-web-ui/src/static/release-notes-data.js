@@ -22,8 +22,12 @@ window.RELEASE_NOTES = {
   releases: [
     {
       date: "2026-09-10",
-      summary: "DQA 안에서 새 버전을 준비하고, 다음 실행부터 적용합니다.",
+      summary: "ChatGPT 데스크톱의 Codex를 DQA에 연결하고, 앱 안에서 업데이트할 수 있습니다.",
       items: [{
+        type: "new", area: "common",
+        title: "ChatGPT 데스크톱의 Codex를 연결합니다 (1.5.0)",
+        detail: "Windows에 설치된 ChatGPT 데스크톱의 Codex를 AI 연결 화면에서 찾을 수 있습니다. WSL의 Codex도 함께 있으면 사용할 위치를 선택할 수 있으며, 기존에 고른 위치는 유지합니다.",
+      }, {
         type: "improved", area: "common",
         title: "별도 설치 프로그램 없이 앱에서 업데이트합니다 (1.4.0)",
         detail: "1.4.0부터 업데이트 파일을 DQA가 직접 받아 준비합니다. 현재 작업과 AI 연결은 유지되며, 알림 영역의 [종료]로 DQA를 끝낸 뒤 다시 실행하면 적용됩니다. 구버전에서 1.4.0으로 처음 전환할 때만 기존 앱 내 업데이트가 설치 프로그램을 한 번 실행합니다. 1.2.x에서 전환하면 앱이 재시작되므로 현재 작업을 마친 뒤 진행해 주세요.",

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import json
 import re
 
@@ -202,6 +203,49 @@ def _is_wsl_path(exe: str) -> bool:
 
 
 
+def _desktop_codex_root() -> str | None:
+    if os.name != "nt":
+        return None
+    local = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
+    return os.path.join(local, "OpenAI", "Codex", "bin") if os.path.isabs(local) else None
+
+
+def _is_desktop_codex_path(path: str | None) -> bool:
+    root = _desktop_codex_root()
+    if not root or not path:
+        return False
+    parent, filename = os.path.split(os.path.normcase(os.path.abspath(path)))
+    container, digest = os.path.split(parent)
+    return (container == os.path.normcase(os.path.abspath(root))
+            and re.fullmatch(r"[0-9a-f]{16}", digest) is not None and filename == "codex.exe")
+
+
+def _desktop_codex_path() -> str | None:
+    """ChatGPT 앱이 사용자 폴더에 배치한 CLI. 패키지 원본·자격증명은 건드리지 않는다."""
+    root = _desktop_codex_root()
+    if not root:
+        return None
+    candidates = []
+    try:
+        with os.scandir(root) as entries:
+            for entry in entries:
+                if not re.fullmatch(r"[0-9a-f]{16}", entry.name):
+                    continue
+                try:
+                    folder = entry.stat(follow_symlinks=False)
+                    path = os.path.join(entry.path, "codex.exe")
+                    binary = os.stat(path, follow_symlinks=False)
+                    if (not stat.S_ISDIR(folder.st_mode) or not stat.S_ISREG(binary.st_mode)
+                            or any(getattr(s, "st_file_attributes", 0) & 0x400 for s in (folder, binary))):
+                        continue
+                    candidates.append((folder.st_mtime_ns, entry.name, path))
+                except OSError:
+                    continue
+    except OSError:
+        return None
+    return max(candidates)[2] if candidates else None
+
+
 def _which_ai(name: str) -> str | None:
     """AI CLI 하나를 찾는다 — **지정된 경로** → PATH → 표준 설치 위치 → WSL 안.
 
@@ -216,6 +260,8 @@ def _which_ai(name: str) -> str | None:
     if pinned:
         return pinned
     p = _which(name)
+    if name == "codex" and _is_desktop_codex_path(p):
+        p = _desktop_codex_path()
     if p:
         return p
     if name not in _known_ai_names():
@@ -226,7 +272,8 @@ def _which_ai(name: str) -> str | None:
             cand = os.path.join(d, name + ext)
             if _is_exec(cand):
                 return cand
-    return _which_ai_in_wsl(name)
+    desktop = _desktop_codex_path() if name == "codex" else None
+    return desktop or _which_ai_in_wsl(name)
 
 
 def _resolve_exe(argv: list[str]) -> list[str]:

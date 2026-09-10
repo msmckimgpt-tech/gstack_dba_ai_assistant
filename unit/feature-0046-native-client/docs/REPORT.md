@@ -8,6 +8,14 @@ source_of_truth: true
 
 # Report
 
+## TASK-20260910-desktop-codex
+
+DQA 1.5.0에 설치된 ChatGPT 데스크톱의 사용자 폴더 Codex 발견·선택을 구현했다. 연결 화면에서 `ChatGPT 데스크톱 · Windows`로 구분하며 기존 WSL 선택은 유지한다. 앱 업데이트 후 해시 경로가 바뀌면 최신 완성 런타임을 다시 검증한다. 자격증명은 공식 CLI가 관리하며 DQA는 벤더 토큰을 읽거나 복사하지 않는다.
+
+native 660개 검증(전체 실행 후 DOM 기대 개수 수정 재검증 포함), runner 37 PASS, 독립 3분야 리뷰 P1/P2 0. 실제 Windows 데스크톱 CLI 로그인/응답, 실제 1.5.0 동결 DQA의 제어된 연결·재실행 2/2 PASS. [검증 Run](test-runs.d/20260910-desktop-codex.md).
+
+배포 전 기록: 1.5.0 Setup/Update ZIP 빌드 완료. 공개·서버 배포·현재 설치된 사용자 DQA 업데이트와 실제 대화 AC4는 진행 중이다. deploy_scope included, 사용자가 구현·구성을 승인한 범위다. 정책 SHA-256 `21286d42d52a987af6bed233fb5c050b429ddfa77d33b4979fea3acb4a17fdef`.
+
 ## TASK-20260910-inapp-update
 
 DQA 1.4.0부터 클라이언트가 업데이트 ZIP을 직접 받아 검증하고 새 버전을 준비한다. 별도 설치 프로그램을 실행하지 않으며 현재 앱과 AI 연결을 유지한다. 사용자가 알림 영역 DQA 아이콘을 오른쪽 클릭해 [종료]한 뒤 다시 실행하면 새 버전이 적용된다. 트레이 숨김은 종료가 아니다.

@@ -1090,3 +1090,10 @@ edit_policy: append-only
 - Related TASK: TASK-20260910-inapp-update
 - 최신 main PR1671의 아이콘 출하 증적과 이번1.4.0 출하 증적을 모두 보존했다. TASK/MODIFY/REVIEW 말미 충돌3곳을 병존으로 해결했다. origin/main 대비 native/web src diff0, 현재 공개1.4.0 유지.
 - merge commit84449a26의 combined-diff 후크가 기존 문서 delta를 인식하지 못한 결과는 이 일반 문서 커밋에서 통합 확인·완료 게이트를 다시 기록한다. 제품 변경·재빌드·재배포는 없다.
+
+## CHG-20260910-desktop-codex — DQA 1.5.0
+
+- 설치된 ChatGPT 데스크톱 앱의 사용자 폴더 Codex를 발견하고 기존 CLI/WSL과 별도 선택한다. 앱 업데이트 경로 변경을 재검증하고 오래된 PATH 후보를 최신 payload로 정규화한다.
+- client/runner 동일 발견 규칙, 선택 pin 우선, 링크/reparse/비정규 파일 제외. 공식 CLI만 실행하며 자격증명·WindowsApps ACL은 변경하지 않는다.
+- 위치 source 계약과 표시, Windows 실제 동결 앱 하네스, 1.5.0 Setup/ZIP 빌드·릴리스노트 정합.
+- [검증](test-runs.d/20260910-desktop-codex.md). 배포·사용자 설치본 수용은 후속 출하 기록으로 구분한다.

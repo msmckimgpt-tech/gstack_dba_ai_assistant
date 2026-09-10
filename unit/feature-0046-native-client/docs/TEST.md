@@ -7,6 +7,10 @@ edit_policy: mixed
 
 # Test
 
+## 2026-09-10 ChatGPT 데스크톱 Codex
+
+[검증 Run](test-runs.d/20260910-desktop-codex.md): native 660개 검증, runner 37 PASS, 실제 Windows CLI 응답, 동결 DQA WebView2 연결·재실행 2/2 PASS. 사용자 설치본 수용은 출하 후 별도 기록한다.
+
 ## 1. 케이스
 
 | 축 | 무엇을 |

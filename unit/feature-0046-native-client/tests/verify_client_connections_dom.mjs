@@ -61,6 +61,24 @@ async function scenario({runtimes=[win,codex], preferences={}, fail=false, token
 }
 const results = {};
 {
+  const desktop = {id:"codex (ChatGPT 데스크톱)", name:"codex", where:"windows",
+    path:"C:/Users/Me/AppData/Local/OpenAI/Codex/bin/aaaaaaaaaaaaaaaa/codex.exe",
+    source:"chatgpt-desktop", usable:true};
+  const s=await scenario({runtimes:[desktop,codex],preferences:{codex:codex.id}});
+  assert.equal(s.connected.get("codex").id,codex.id);
+  [...s.doc.querySelectorAll('[data-platform="codex"] button')].find(b=>b.textContent==="위치 변경").click();
+  const card=s.doc.querySelector('[data-platform="codex"]');
+  assert(card.textContent.includes("ChatGPT 데스크톱 · Windows"));
+  assert(card.textContent.includes("WSL · Ubuntu · root"));
+  const radio=[...card.querySelectorAll('input[type="radio"]')].find(r=>r.value===desktop.id);
+  radio.checked=true;radio.dispatchEvent(new s.dom.window.Event("change"));await tick();
+  assert.equal(s.connected.get("codex").path,desktop.path);
+  assert(s.toasts.at(-1).includes("ChatGPT 데스크톱"));
+  const unique=await scenario({runtimes:[desktop]});
+  assert.equal(unique.connected.get("codex").id,desktop.id);
+  results.desktop_choice_and_preserved_wsl=true;
+}
+{
   const denied = {...codex, id:"codex (WSL · Ubuntu · blocked)", user:"blocked", usable:false, answers:false,
     logged_in:true, can_login_here:false, error_code:"permission_denied", detail:"실행 권한이 없습니다 (Permission denied)."};
   const s=await scenario({runtimes:[codex,denied],preferences:{codex:denied.id}});
