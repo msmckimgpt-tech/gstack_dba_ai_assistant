@@ -440,3 +440,18 @@ denied`), 비-상승 PowerShell 의 `IsReadOnly=false` 도 거부된다(디렉�
   옛 이름 `TaskCache\Tree` 빈 껍데기도 재부팅으로 소멸.
 - 앞 두 관측의 「무재발」 오판은 `IgnoreNew` 억제 때문이었고, 이번 판정은 인스턴스 0건 +
   경계 130회 이상이라는 두 조건으로 구분된다.
+
+## CHG-20260910T113352-listener-recovery
+- Timestamp: 2026-09-10T11:33:52+09:00
+- Related TASK: TASK-20260910-listener-recovery
+- 설정과 실제 리스너 drift를 검출하여 연결이 없는 누락 포트만 복구한다. RepairOnly로 조회 실패/대상 불일치 시 무변경 중단하고, postcheck와 TCP 실패를 nonzero로 보고한다.
+- 검증/한계: [원장](test-runs.d/20260910-listener-recovery.md). 사용자 UAC 승인 적용·public HTTPS 다운로드·기본 DQA 화면 PASS.
+
+## CHG-20260910T114600-latest-main-integration
+- Timestamp: 2026-09-10T11:46:00+09:00
+- c684d12a의 1.4.0 제품·템플릿 v3.54.3을 통합했다. origin/main 대비 제품 변경은 본 cycle의 Windows portproxy 운영 코드뿐이고 native 변경은 테스트 하네스뿐이다. FUNCTION은 최신1.4.0 계약을 보존한다.
+- 정책 diff는 template_version 한 줄이며 본문 계약은 동일하다. 현재 AGENTS SHA256 21286d42d52a987af6bed233fb5c050b429ddfa77d33b4979fea3acb4a17fdef.
+
+## CHG-20260910T114800-postmerge-record
+- Timestamp: 2026-09-10T11:48:00+09:00
+- 통합6bdcc7ba의 최신1.4.0 제품 보존과 출하 증적을 확인했다. merge combined diff를 읽는 post-commit gate의 checkbox/CHG/REVIEW 미인식은 정상 후속 문서 커밋으로 정합한다. 제품·운영 bytes 추가 변경 없음.

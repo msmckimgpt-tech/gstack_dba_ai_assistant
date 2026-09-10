@@ -1,0 +1,158 @@
+{
+  "pe": [
+    {
+      "file": "DQAConnect.exe",
+      "matched_sizes": [
+        16,
+        20,
+        24,
+        32,
+        40,
+        48,
+        64,
+        128,
+        256
+      ]
+    },
+    {
+      "file": "DQAConnect-Setup-1.3.1.exe",
+      "matched_sizes": [
+        16,
+        20,
+        24,
+        32,
+        40,
+        48,
+        64,
+        128,
+        256
+      ]
+    }
+  ],
+  "native": {
+    "app-exe": {
+      "pixels_equal": true,
+      "width": 32,
+      "height": 32
+    },
+    "setup-exe": {
+      "pixels_equal": true,
+      "width": 32,
+      "height": 32
+    },
+    "tray": {
+      "pixels_equal": true,
+      "width": 32,
+      "height": 32
+    },
+    "tk-window": {
+      "pixels_equal": true,
+      "width": 32,
+      "height": 32
+    }
+  },
+  "surface": "native",
+  "verdict": "PASS",
+  "bundle_bytes_equal": true,
+  "alpha": [
+    {
+      "size": 16,
+      "min": 0,
+      "max": 255,
+      "corners": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "size": 20,
+      "min": 0,
+      "max": 255,
+      "corners": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "size": 24,
+      "min": 0,
+      "max": 255,
+      "corners": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "size": 32,
+      "min": 0,
+      "max": 255,
+      "corners": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "size": 40,
+      "min": 0,
+      "max": 255,
+      "corners": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "size": 48,
+      "min": 0,
+      "max": 255,
+      "corners": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "size": 64,
+      "min": 0,
+      "max": 255,
+      "corners": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "size": 128,
+      "min": 0,
+      "max": 255,
+      "corners": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "size": 256,
+      "min": 0,
+      "max": 255,
+      "corners": [
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  ]
+}

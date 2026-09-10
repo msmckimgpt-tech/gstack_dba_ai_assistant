@@ -6587,3 +6587,13 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
 - [통합검증](../../feature-0046-native-client/docs/test-runs.d/20260910-transparent-icon-release.md).
 
 - main 통합 게이트가 과거 세션 재사용의 최종PASS→초기FAIL 역순 기록을 현재FAIL로 읽었다. feature-0043의 같은날 보완 실측 근거를 대조하고 해당 Run을 시간순/동일Scenario로 정합했다. 새 실측을 주장하지 않는다.
+
+## CHG-20260910T114000-icon-shipping-closeout
+- Timestamp: 2026-09-10T11:40:00+09:00
+- Related TASK: TASK-20260910-transparent-icon-release
+- 1.3.1 공개 및 public/localhost 다운로드, 실제 기본 DQA 로고/작업 표시줄, 웹 ready/soak 증적을 기록했다. 캡처 하네스는 기존 .NET Drawing, DPI 인식과 자기 창 가림 방지/원복을 사용한다. 사용자 설치/프로세스는 보존했다.
+- [출하 원장](test-runs.d/20260910-transparent-icon-release.md).
+
+## CHG-20260910T114800-postmerge-record
+- Timestamp: 2026-09-10T11:48:00+09:00
+- 통합6bdcc7ba의 최신1.4.0 제품 보존과 출하 증적을 확인했다. merge combined diff를 읽는 post-commit gate의 checkbox/CHG/REVIEW 미인식은 정상 후속 문서 커밋으로 정합한다. 제품·운영 bytes 추가 변경 없음.

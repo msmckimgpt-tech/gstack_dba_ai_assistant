@@ -1,0 +1,103 @@
+{
+  "result": "PASS",
+  "cases": [
+    {
+      "case": "upgrade",
+      "resources": [
+        {
+          "file": "DQALauncher.exe",
+          "matched_sizes": [
+            16,
+            20,
+            24,
+            32,
+            40,
+            48,
+            64,
+            128,
+            256
+          ]
+        },
+        {
+          "file": "DQAConnect.exe",
+          "matched_sizes": [
+            16,
+            20,
+            24,
+            32,
+            40,
+            48,
+            64,
+            128,
+            256
+          ]
+        },
+        {
+          "file": "unins000.exe",
+          "matched_sizes": [
+            16,
+            20,
+            24,
+            32,
+            40,
+            48,
+            64,
+            128,
+            256
+          ]
+        }
+      ],
+      "uninstall_result": "PASS",
+      "launcher_pending_icon_remaining": false
+    },
+    {
+      "case": "fresh",
+      "resources": [
+        {
+          "file": "DQALauncher.exe",
+          "matched_sizes": [
+            16,
+            20,
+            24,
+            32,
+            40,
+            48,
+            64,
+            128,
+            256
+          ]
+        },
+        {
+          "file": "DQAConnect.exe",
+          "matched_sizes": [
+            16,
+            20,
+            24,
+            32,
+            40,
+            48,
+            64,
+            128,
+            256
+          ]
+        },
+        {
+          "file": "unins000.exe",
+          "matched_sizes": [
+            16,
+            20,
+            24,
+            32,
+            40,
+            48,
+            64,
+            128,
+            256
+          ]
+        }
+      ],
+      "uninstall_result": "PASS",
+      "launcher_pending_icon_remaining": false
+    }
+  ]
+}

@@ -3347,3 +3347,9 @@ nonce 를 덮어쓸 수 있었다(실행 재현). ② 브리지 좌표 캡처가
 - Verdict: PASS
 - Human Approval Needed: no
 - [통합검증](../../feature-0046-native-client/docs/test-runs.d/20260910-transparent-icon-release.md).
+
+## 2026-09-10 — 1.3.1 최종 출하
+
+PR1617 병합 main ebf5e365를 웹2replica에 배포하고 ready·90초 soak를 통과했다. Windows 설치기1.3.1을 공개했으며 public/localhost 양쪽 실제 다운로드의 TLS/bytes/SHA가 검증빌드와 일치한다. 기본 주소 실제 DQA 로그인 화면의 투명 심볼과 작업 표시줄을 확인하고 검증용 앱을 정상 종료했다. 사용자 원본 설치/앱은 변경하지 않았다.
+
+배포 검수에서 발견한 Windows public80/443 리스너 누락은 feature-0006에서 수정했다. 사용자 UAC 승인 후 정본 운영 스크립트와 해당 리스너를 복구했으며 다른 포트·방화벽·서비스 재시작은 변경하지 않았다. [최종 원장](test-runs.d/20260910-transparent-icon-release.md). 웹/클라이언트 제품은 ebf5e365이고 이후 커밋은 운영 스크립트·검증·증적 정합이다. GitHub Actions와 유료 AI 대화는 별도 PASS를 주장하지 않는다.

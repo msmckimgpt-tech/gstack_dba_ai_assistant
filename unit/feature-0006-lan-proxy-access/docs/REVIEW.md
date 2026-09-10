@@ -396,3 +396,36 @@ legacy skip 은 순수한 정리 동기였고 실제로 무해해 보였다. 그
 - **범위**: 종결 실측 기록만(문서). 코드 변경 0.
 - **Trigger**: non-policy-doc → panel SKIP. 실측 대상 코드는 `REV-20260909T070000-portproxy-s4u`
   에서 이미 판정됐다.
+
+## REV-20260910T113352-listener-recovery [SUBAGENT:icon_release_review,icon_final_design]
+- Related TASK: TASK-20260910-listener-recovery
+- Trigger: endpoint/서비스 접근 경로, QA/security 운영 복구 검토.
+- Timestamp: 2026-09-10T11:33:52+09:00
+- Verdict: PASS — 코드 차단 P1/P2 0. 관리자 적용 전 검토이며 라이브 복구 PASS를 의미하지 않는다.
+- 정상 리스너 무변경·drift 한정 복구·활성 연결 보호·postcheck 검토. 보안 P2(조회 실패/불일치가 recreated fallback으로 들어감)는 RepairOnly로 해결하고 무변경 실패 fixture를 추가했다.
+- [Windows mock](artifacts/20260910-listener-recovery/mock-result.json): 6/6 PASS, 실제 네트워크 변경0. wrapper 소스/배포본 hash pin·백업·타 포트 보존·무서비스재시작을 검토했다.
+- Human Approval Needed: Windows UAC consent for the prepared live repair. 사용자 배포 위임은 이미 있으며 OS 승격 입력만 필요하다.
+
+## REV-20260910T114000-listener-applied [SKIPPED:non-policy-doc]
+- Related TASK: TASK-20260910-listener-recovery
+- Timestamp: 2026-09-10T11:40:00+09:00
+- Trigger: 승인된 최종 소스의 실제 운영 적용 결과 기록.
+- Verdict: PASS
+- Human Approval Needed: no — 사용자 Windows UAC 승인 및 적용 PASS 완료.
+- 앞 독립 QA/security 승인본 SHA와 운영 배포본 SHA 일치. 실제 대상 포트 복구·다른 매핑 보존·public 다운로드/기본 DQA 검증 PASS. [원장](test-runs.d/20260910-listener-recovery.md).
+
+## REV-20260910T114600-latest-main-integration [SUBAGENT:icon_release_review]
+- Related TASK: TASK-20260910-listener-recovery
+- Timestamp: 2026-09-10T11:46:00+09:00
+- Trigger: backend/QA 최신 제품 보존과 문서 충돌 해소 검토.
+- Verdict: PASS
+- Human Approval Needed: no
+- 고정 c684d12a 대비 native/web src와 native FUNCTION 동일, TASK/REPORT의1.4.0 본문 보존 및1.3.1 증적 병존 확인. 추가 P1/P2 0, 충돌0, diff check PASS.
+
+## REV-20260910T114800-postmerge-record [SKIPPED:non-policy-doc]
+- Related TASK: TASK-20260910-listener-recovery
+- Timestamp: 2026-09-10T11:48:00+09:00
+- Trigger: 비정책 merge 결과/출하 기록 정합.
+- Verdict: PASS
+- Human Approval Needed: no
+- 제품 코드 추가 변경 없음. 6bdcc7ba는 native/web1.4.0 제품과 FUNCTION 동일성에 대한 독립 QA 확인 P1/P2 0 및 승인한 운영 복구 코드를 보존한다. 실제 Windows/공인 채널 증적은 기존 Run을 참조한다.

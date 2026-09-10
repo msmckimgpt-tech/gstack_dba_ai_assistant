@@ -1,0 +1,883 @@
+
+[deploy-web] === preflight: 권한 ===
+
+[deploy-web] === flock 획득 (전체 배포 직렬화, -w 600s) ===
+
+[deploy-web] === 배포 대상 SHA 결정 (origin/main coalesce) ===
+[deploy-web] 배포 대상 = origin/main HEAD = ebf5e365 (caller worktree commit 아님 — 최신 커밋 누락 방지)
+
+[deploy-web] === preflight: 프로덕션 file-set 격리 (-f docker-compose.yml only) ===
+[deploy-web] OK — web-a/web-b 호스트포트 없음, 두 replica 정의 확인.
+
+[deploy-web] === preflight: TLS (leaf SAN / CA / expiry) ===
+[deploy-web] OK — leaf SAN/CA/expiry 정상 (두 replica 공유 cert).
+
+[deploy-web] === web 이미지 빌드 (build-once, GIT_COMMIT=ebf5e365 → mysql-ai-web:ebf5e365) ===
+[deploy-web] last-good(mysql-ai-web) = 1df8d34c
+ Image mysql-ai-web:ebf5e365 Building
+#1 [internal] load local bake definitions
+#1 reading from stdin 642B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 5.78kB done
+#2 DONE 0.1s
+
+#3 [internal] load metadata for docker.io/library/python:3.11-slim
+#3 DONE 2.2s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 2B done
+#4 DONE 0.1s
+
+#5 [internal] load build context
+#5 DONE 0.0s
+
+#6 [ 1/16] FROM docker.io/library/python:3.11-slim@sha256:9534e5a8e315485d4061ed659af0fd78a284c015f9b73661b41d6bab25604534
+#6 resolve docker.io/library/python:3.11-slim@sha256:9534e5a8e315485d4061ed659af0fd78a284c015f9b73661b41d6bab25604534 0.0s done
+#6 sha256:b8fe4ce3655e95f7f22c2a87d8e03a2f1f0cedc488a8e9adf18cc5a18cfdf401 5.49kB / 5.49kB done
+#6 sha256:9534e5a8e315485d4061ed659af0fd78a284c015f9b73661b41d6bab25604534 10.37kB / 10.37kB done
+#6 sha256:d1053354624536b044162aaab1e418bd000ea35184fb1ae098ab3166b1072e72 1.75kB / 1.75kB done
+#6 DONE 0.5s
+
+#5 [internal] load build context
+#5 transferring context: 22.80MB 0.4s done
+#5 DONE 0.5s
+
+#7 [ 2/16] WORKDIR /app
+#7 DONE 0.6s
+
+#8 [ 3/16] RUN apt-get update  && apt-get install -y --no-install-recommends locales tzdata default-mysql-client ca-certificates gnupg wget  && . /etc/os-release  && wget -qO /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc  && gpg --dearmor -o /usr/share/keyrings/pgdg.gpg /tmp/pgdg.asc  && echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] http://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" > /etc/apt/sources.list.d/pgdg.list  && apt-get update  && apt-get install -y --no-install-recommends postgresql-client-16  && apt-get purge -y --auto-remove gnupg wget  && rm -f /tmp/pgdg.asc  && sed -i 's/^# *ko_KR.UTF-8 UTF-8/ko_KR.UTF-8 UTF-8/' /etc/locale.gen  && locale-gen ko_KR.UTF-8  && rm -rf /var/lib/apt/lists/*
+#8 1.025 Hit:1 http://deb.debian.org/debian trixie InRelease
+#8 1.025 Get:2 http://deb.debian.org/debian trixie-updates InRelease [47.3 kB]
+#8 1.036 Get:3 http://deb.debian.org/debian-security trixie-security InRelease [43.4 kB]
+#8 1.066 Get:4 http://deb.debian.org/debian trixie/main amd64 Packages [9673 kB]
+#8 1.282 Get:5 http://deb.debian.org/debian trixie-updates/main amd64 Packages [4412 B]
+#8 1.285 Get:6 http://deb.debian.org/debian-security trixie-security/main amd64 Packages [256 kB]
+#8 2.028 Fetched 10.0 MB in 1s (9195 kB/s)
+#8 2.028 Reading package lists...
+#8 2.571 Reading package lists...
+#8 3.084 Building dependency tree...
+#8 3.222 Reading state information...
+#8 3.391 tzdata is already the newest version (2026b-0+deb13u1).
+#8 3.391 ca-certificates is already the newest version (20250419).
+#8 3.391 The following additional packages will be installed:
+#8 3.391   dirmngr gnupg-l10n gpg gpg-agent gpgconf gpgsm libassuan9 libc-l10n
+#8 3.391   libconfig-inifiles-perl libedit2 libgcrypt20 libgdbm-compat4t64
+#8 3.391   libgnutls30t64 libgpg-error0 libidn2-0 libksba8 libldap2 libmariadb3
+#8 3.391   libncurses6 libnpth0t64 libp11-kit0 libpcre2-posix3 libperl5.40 libpsl5t64
+#8 3.391   libsasl2-2 libsasl2-modules-db libtasn1-6 libunistring5 mariadb-client
+#8 3.391   mariadb-client-compat mariadb-client-core mariadb-common mysql-common perl
+#8 3.392   perl-modules-5.40 pinentry-curses
+#8 3.392 Suggested packages:
+#8 3.392   dbus-user-session libpam-systemd pinentry-gnome3 tor gpg-wks-server
+#8 3.392   parcimonie xloadimage scdaemon tpm2daemon rng-tools gnutls-bin
+#8 3.392   sensible-utils perl-doc libterm-readline-gnu-perl
+#8 3.392   | libterm-readline-perl-perl make libtap-harness-archive-perl pinentry-doc
+#8 3.392 Recommended packages:
+#8 3.392   gnupg-utils gpg-wks-client gpgv libgpg-error-l10n libldap-common libgpm2
+#8 3.392   publicsuffix libsasl2-modules libdbd-mariadb-perl | libdbd-mysql-perl
+#8 3.392   libdbi-perl libterm-readkey-perl
+#8 3.609 The following NEW packages will be installed:
+#8 3.609   default-mysql-client dirmngr gnupg gnupg-l10n gpg gpg-agent gpgconf gpgsm
+#8 3.609   libassuan9 libc-l10n libconfig-inifiles-perl libedit2 libgcrypt20
+#8 3.609   libgdbm-compat4t64 libgnutls30t64 libgpg-error0 libidn2-0 libksba8 libldap2
+#8 3.609   libmariadb3 libncurses6 libnpth0t64 libp11-kit0 libpcre2-posix3 libperl5.40
+#8 3.610   libpsl5t64 libsasl2-2 libsasl2-modules-db libtasn1-6 libunistring5 locales
+#8 3.610   mariadb-client mariadb-client-compat mariadb-client-core mariadb-common
+#8 3.610   mysql-common perl perl-modules-5.40 pinentry-curses wget
+#8 3.650 0 upgraded, 40 newly installed, 0 to remove and 0 not upgraded.
+#8 3.650 Need to get 24.9 MB of archives.
+#8 3.650 After this operation, 182 MB of additional disk space will be used.
+#8 3.650 Get:1 http://deb.debian.org/debian trixie/main amd64 libc-l10n all 2.41-12+deb13u3 [740 kB]
+#8 3.925 Get:2 http://deb.debian.org/debian trixie/main amd64 locales all 2.41-12+deb13u3 [3925 kB]
+#8 4.031 Get:3 http://deb.debian.org/debian trixie/main amd64 perl-modules-5.40 all 5.40.1-6 [3019 kB]
+#8 4.113 Get:4 http://deb.debian.org/debian trixie/main amd64 libgdbm-compat4t64 amd64 1.24-2 [50.3 kB]
+#8 4.115 Get:5 http://deb.debian.org/debian trixie/main amd64 libperl5.40 amd64 5.40.1-6 [4341 kB]
+#8 4.229 Get:6 http://deb.debian.org/debian trixie/main amd64 perl amd64 5.40.1-6 [267 kB]
+#8 4.439 Get:7 http://deb.debian.org/debian trixie/main amd64 libunistring5 amd64 1.3-2 [477 kB]
+#8 4.440 Get:8 http://deb.debian.org/debian trixie/main amd64 libidn2-0 amd64 2.3.8-2 [109 kB]
+#8 4.440 Get:9 http://deb.debian.org/debian trixie/main amd64 libp11-kit0 amd64 0.25.5-3 [425 kB]
+#8 4.442 Get:10 http://deb.debian.org/debian trixie/main amd64 libtasn1-6 amd64 4.20.0-2+deb13u1 [50.1 kB]
+#8 4.442 Get:11 http://deb.debian.org/debian trixie/main amd64 libgnutls30t64 amd64 3.8.9-3+deb13u4 [1469 kB]
+#8 4.446 Get:12 http://deb.debian.org/debian trixie/main amd64 libpsl5t64 amd64 0.21.2-1.1+b1 [57.2 kB]
+#8 4.446 Get:13 http://deb.debian.org/debian trixie/main amd64 wget amd64 1.25.0-2 [984 kB]
+#8 4.462 Get:14 http://deb.debian.org/debian trixie/main amd64 libconfig-inifiles-perl all 3.000003-3+deb13u1 [45.0 kB]
+#8 4.463 Get:15 http://deb.debian.org/debian trixie/main amd64 mysql-common all 5.8+1.1.1 [6784 B]
+#8 4.463 Get:16 http://deb.debian.org/debian trixie/main amd64 mariadb-common all 1:11.8.6-0+deb13u1 [29.5 kB]
+#8 4.473 Get:17 http://deb.debian.org/debian trixie/main amd64 libmariadb3 amd64 1:11.8.6-0+deb13u1 [187 kB]
+#8 4.481 Get:18 http://deb.debian.org/debian trixie/main amd64 libedit2 amd64 3.1-20250104-1 [93.8 kB]
+#8 4.483 Get:19 http://deb.debian.org/debian trixie/main amd64 libncurses6 amd64 6.5+20250216-2 [105 kB]
+#8 4.494 Get:20 http://deb.debian.org/debian trixie/main amd64 mariadb-client-core amd64 1:11.8.6-0+deb13u1 [919 kB]
+#8 4.531 Get:21 http://deb.debian.org/debian trixie/main amd64 libpcre2-posix3 amd64 10.46-1~deb13u1 [63.9 kB]
+#8 4.560 Get:22 http://deb.debian.org/debian trixie/main amd64 mariadb-client amd64 1:11.8.6-0+deb13u1 [3164 kB]
+#8 4.632 Get:23 http://deb.debian.org/debian trixie/main amd64 mariadb-client-compat all 1:11.8.6-0+deb13u1 [29.7 kB]
+#8 4.632 Get:24 http://deb.debian.org/debian trixie/main amd64 default-mysql-client all 1.1.1 [3028 B]
+#8 4.632 Get:25 http://deb.debian.org/debian trixie/main amd64 libgpg-error0 amd64 1.51-4 [82.1 kB]
+#8 4.633 Get:26 http://deb.debian.org/debian trixie/main amd64 libassuan9 amd64 3.0.2-2 [61.5 kB]
+#8 4.640 Get:27 http://deb.debian.org/debian trixie/main amd64 libgcrypt20 amd64 1.11.0-7+deb13u1 [843 kB]
+#8 4.664 Get:28 http://deb.debian.org/debian trixie/main amd64 gpgconf amd64 2.4.7-21+deb13u1+b4 [129 kB]
+#8 4.668 Get:29 http://deb.debian.org/debian trixie/main amd64 libksba8 amd64 1.6.7-2+b1 [136 kB]
+#8 4.672 Get:30 http://deb.debian.org/debian trixie/main amd64 libsasl2-modules-db amd64 2.1.28+dfsg1-9 [19.8 kB]
+#8 4.673 Get:31 http://deb.debian.org/debian trixie/main amd64 libsasl2-2 amd64 2.1.28+dfsg1-9 [57.5 kB]
+#8 4.683 Get:32 http://deb.debian.org/debian trixie/main amd64 libldap2 amd64 2.6.10+dfsg-1 [194 kB]
+#8 4.744 Get:33 http://deb.debian.org/debian trixie/main amd64 libnpth0t64 amd64 1.8-3 [23.2 kB]
+#8 4.744 Get:34 http://deb.debian.org/debian trixie/main amd64 dirmngr amd64 2.4.7-21+deb13u1+b4 [384 kB]
+#8 4.753 Get:35 http://deb.debian.org/debian trixie/main amd64 gnupg-l10n all 2.4.7-21+deb13u1 [749 kB]
+#8 4.887 Get:36 http://deb.debian.org/debian trixie/main amd64 gpg amd64 2.4.7-21+deb13u1+b4 [634 kB]
+#8 4.889 Get:37 http://deb.debian.org/debian trixie/main amd64 pinentry-curses amd64 1.3.1-2 [86.4 kB]
+#8 4.889 Get:38 http://deb.debian.org/debian trixie/main amd64 gpg-agent amd64 2.4.7-21+deb13u1+b4 [271 kB]
+#8 4.913 Get:39 http://deb.debian.org/debian trixie/main amd64 gpgsm amd64 2.4.7-21+deb13u1+b4 [276 kB]
+#8 4.939 Get:40 http://deb.debian.org/debian trixie/main amd64 gnupg all 2.4.7-21+deb13u1 [417 kB]
+#8 5.206 debconf: unable to initialize frontend: Dialog
+#8 5.206 debconf: (TERM is not set, so the dialog frontend is not usable.)
+#8 5.206 debconf: falling back to frontend: Readline
+#8 5.207 debconf: unable to initialize frontend: Readline
+#8 5.207 debconf: (Can't locate Term/ReadLine.pm in @INC (you may need to install the Term::ReadLine module) (@INC entries checked: /etc/perl /usr/local/lib/x86_64-linux-gnu/perl/5.40.1 /usr/local/share/perl/5.40.1 /usr/lib/x86_64-linux-gnu/perl5/5.40 /usr/share/perl5 /usr/lib/x86_64-linux-gnu/perl-base /usr/lib/x86_64-linux-gnu/perl/5.40 /usr/share/perl/5.40 /usr/local/lib/site_perl) at /usr/share/perl5/Debconf/FrontEnd/Readline.pm line 8, <STDIN> line 40.)
+#8 5.207 debconf: falling back to frontend: Teletype
+#8 5.211 debconf: unable to initialize frontend: Teletype
+#8 5.211 debconf: (This frontend requires a controlling tty.)
+#8 5.211 debconf: falling back to frontend: Noninteractive
+#8 6.347 Preconfiguring packages ...
+#8 6.475 Fetched 24.9 MB in 1s (18.9 MB/s)
+#8 6.529 Selecting previously unselected package libc-l10n.
+#8 6.529 (Reading database ...
+(Reading database ... 5%
+(Reading database ... 10%
+(Reading database ... 15%
+(Reading database ... 20%
+(Reading database ... 25%
+(Reading database ... 30%
+(Reading database ... 35%
+(Reading database ... 40%
+(Reading database ... 45%
+(Reading database ... 50%
+(Reading database ... 55%
+(Reading database ... 60%
+(Reading database ... 65%
+(Reading database ... 70%
+(Reading database ... 75%
+(Reading database ... 80%
+(Reading database ... 85%
+(Reading database ... 90%
+(Reading database ... 95%
+(Reading database ... 100%
+(Reading database ... 5652 files and directories currently installed.)
+#8 6.570 Preparing to unpack .../00-libc-l10n_2.41-12+deb13u3_all.deb ...
+#8 6.626 Unpacking libc-l10n (2.41-12+deb13u3) ...
+#8 6.850 Selecting previously unselected package locales.
+#8 6.851 Preparing to unpack .../01-locales_2.41-12+deb13u3_all.deb ...
+#8 6.860 Unpacking locales (2.41-12+deb13u3) ...
+#8 7.122 Selecting previously unselected package perl-modules-5.40.
+#8 7.122 Preparing to unpack .../02-perl-modules-5.40_5.40.1-6_all.deb ...
+#8 7.133 Unpacking perl-modules-5.40 (5.40.1-6) ...
+#8 7.540 Selecting previously unselected package libgdbm-compat4t64:amd64.
+#8 7.541 Preparing to unpack .../03-libgdbm-compat4t64_1.24-2_amd64.deb ...
+#8 7.568 Unpacking libgdbm-compat4t64:amd64 (1.24-2) ...
+#8 7.655 Selecting previously unselected package libperl5.40:amd64.
+#8 7.655 Preparing to unpack .../04-libperl5.40_5.40.1-6_amd64.deb ...
+#8 7.667 Unpacking libperl5.40:amd64 (5.40.1-6) ...
+#8 7.996 Selecting previously unselected package perl.
+#8 7.996 Preparing to unpack .../05-perl_5.40.1-6_amd64.deb ...
+#8 8.006 Unpacking perl (5.40.1-6) ...
+#8 8.105 Selecting previously unselected package libunistring5:amd64.
+#8 8.106 Preparing to unpack .../06-libunistring5_1.3-2_amd64.deb ...
+#8 8.118 Unpacking libunistring5:amd64 (1.3-2) ...
+#8 8.226 Selecting previously unselected package libidn2-0:amd64.
+#8 8.227 Preparing to unpack .../07-libidn2-0_2.3.8-2_amd64.deb ...
+#8 8.236 Unpacking libidn2-0:amd64 (2.3.8-2) ...
+#8 8.330 Selecting previously unselected package libp11-kit0:amd64.
+#8 8.331 Preparing to unpack .../08-libp11-kit0_0.25.5-3_amd64.deb ...
+#8 8.443 Unpacking libp11-kit0:amd64 (0.25.5-3) ...
+#8 8.550 Selecting previously unselected package libtasn1-6:amd64.
+#8 8.551 Preparing to unpack .../09-libtasn1-6_4.20.0-2+deb13u1_amd64.deb ...
+#8 8.563 Unpacking libtasn1-6:amd64 (4.20.0-2+deb13u1) ...
+#8 8.645 Selecting previously unselected package libgnutls30t64:amd64.
+#8 8.646 Preparing to unpack .../10-libgnutls30t64_3.8.9-3+deb13u4_amd64.deb ...
+#8 8.656 Unpacking libgnutls30t64:amd64 (3.8.9-3+deb13u4) ...
+#8 8.786 Selecting previously unselected package libpsl5t64:amd64.
+#8 8.786 Preparing to unpack .../11-libpsl5t64_0.21.2-1.1+b1_amd64.deb ...
+#8 8.793 Unpacking libpsl5t64:amd64 (0.21.2-1.1+b1) ...
+#8 8.857 Selecting previously unselected package wget.
+#8 8.858 Preparing to unpack .../12-wget_1.25.0-2_amd64.deb ...
+#8 8.870 Unpacking wget (1.25.0-2) ...
+#8 8.992 Selecting previously unselected package libconfig-inifiles-perl.
+#8 8.993 Preparing to unpack .../13-libconfig-inifiles-perl_3.000003-3+deb13u1_all.deb ...
+#8 9.003 Unpacking libconfig-inifiles-perl (3.000003-3+deb13u1) ...
+#8 9.123 Selecting previously unselected package mysql-common.
+#8 9.124 Preparing to unpack .../14-mysql-common_5.8+1.1.1_all.deb ...
+#8 9.142 Unpacking mysql-common (5.8+1.1.1) ...
+#8 9.231 Selecting previously unselected package mariadb-common.
+#8 9.231 Preparing to unpack .../15-mariadb-common_1%3a11.8.6-0+deb13u1_all.deb ...
+#8 9.243 Unpacking mariadb-common (1:11.8.6-0+deb13u1) ...
+#8 9.364 Selecting previously unselected package libmariadb3:amd64.
+#8 9.365 Preparing to unpack .../16-libmariadb3_1%3a11.8.6-0+deb13u1_amd64.deb ...
+#8 9.374 Unpacking libmariadb3:amd64 (1:11.8.6-0+deb13u1) ...
+#8 9.462 Selecting previously unselected package libedit2:amd64.
+#8 9.463 Preparing to unpack .../17-libedit2_3.1-20250104-1_amd64.deb ...
+#8 9.477 Unpacking libedit2:amd64 (3.1-20250104-1) ...
+#8 9.556 Selecting previously unselected package libncurses6:amd64.
+#8 9.557 Preparing to unpack .../18-libncurses6_6.5+20250216-2_amd64.deb ...
+#8 9.570 Unpacking libncurses6:amd64 (6.5+20250216-2) ...
+#8 9.672 Selecting previously unselected package mariadb-client-core.
+#8 9.673 Preparing to unpack .../19-mariadb-client-core_1%3a11.8.6-0+deb13u1_amd64.deb ...
+#8 9.683 Unpacking mariadb-client-core (1:11.8.6-0+deb13u1) ...
+#8 9.871 Selecting previously unselected package libpcre2-posix3:amd64.
+#8 9.872 Preparing to unpack .../20-libpcre2-posix3_10.46-1~deb13u1_amd64.deb ...
+#8 9.879 Unpacking libpcre2-posix3:amd64 (10.46-1~deb13u1) ...
+#8 9.958 Selecting previously unselected package mariadb-client.
+#8 9.959 Preparing to unpack .../21-mariadb-client_1%3a11.8.6-0+deb13u1_amd64.deb ...
+#8 9.974 Unpacking mariadb-client (1:11.8.6-0+deb13u1) ...
+#8 10.26 Selecting previously unselected package mariadb-client-compat.
+#8 10.26 Preparing to unpack .../22-mariadb-client-compat_1%3a11.8.6-0+deb13u1_all.deb ...
+#8 10.27 Unpacking mariadb-client-compat (1:11.8.6-0+deb13u1) ...
+#8 10.41 Selecting previously unselected package default-mysql-client.
+#8 10.41 Preparing to unpack .../23-default-mysql-client_1.1.1_all.deb ...
+#8 10.42 Unpacking default-mysql-client (1.1.1) ...
+#8 10.49 Selecting previously unselected package libgpg-error0:amd64.
+#8 10.50 Preparing to unpack .../24-libgpg-error0_1.51-4_amd64.deb ...
+#8 10.51 Unpacking libgpg-error0:amd64 (1.51-4) ...
+#8 10.62 Selecting previously unselected package libassuan9:amd64.
+#8 10.62 Preparing to unpack .../25-libassuan9_3.0.2-2_amd64.deb ...
+#8 10.63 Unpacking libassuan9:amd64 (3.0.2-2) ...
+#8 10.85 Selecting previously unselected package libgcrypt20:amd64.
+#8 10.85 Preparing to unpack .../26-libgcrypt20_1.11.0-7+deb13u1_amd64.deb ...
+#8 10.87 Unpacking libgcrypt20:amd64 (1.11.0-7+deb13u1) ...
+#8 11.10 Selecting previously unselected package gpgconf.
+#8 11.10 Preparing to unpack .../27-gpgconf_2.4.7-21+deb13u1+b4_amd64.deb ...
+#8 11.12 Unpacking gpgconf (2.4.7-21+deb13u1+b4) ...
+#8 11.46 Selecting previously unselected package libksba8:amd64.
+#8 11.46 Preparing to unpack .../28-libksba8_1.6.7-2+b1_amd64.deb ...
+#8 11.47 Unpacking libksba8:amd64 (1.6.7-2+b1) ...
+#8 11.60 Selecting previously unselected package libsasl2-modules-db:amd64.
+#8 11.61 Preparing to unpack .../29-libsasl2-modules-db_2.1.28+dfsg1-9_amd64.deb ...
+#8 11.62 Unpacking libsasl2-modules-db:amd64 (2.1.28+dfsg1-9) ...
+#8 11.72 Selecting previously unselected package libsasl2-2:amd64.
+#8 11.72 Preparing to unpack .../30-libsasl2-2_2.1.28+dfsg1-9_amd64.deb ...
+#8 11.72 Unpacking libsasl2-2:amd64 (2.1.28+dfsg1-9) ...
+#8 11.83 Selecting previously unselected package libldap2:amd64.
+#8 11.83 Preparing to unpack .../31-libldap2_2.6.10+dfsg-1_amd64.deb ...
+#8 11.84 Unpacking libldap2:amd64 (2.6.10+dfsg-1) ...
+#8 11.92 Selecting previously unselected package libnpth0t64:amd64.
+#8 11.92 Preparing to unpack .../32-libnpth0t64_1.8-3_amd64.deb ...
+#8 11.93 Unpacking libnpth0t64:amd64 (1.8-3) ...
+#8 12.04 Selecting previously unselected package dirmngr.
+#8 12.04 Preparing to unpack .../33-dirmngr_2.4.7-21+deb13u1+b4_amd64.deb ...
+#8 12.05 Unpacking dirmngr (2.4.7-21+deb13u1+b4) ...
+#8 12.24 Selecting previously unselected package gnupg-l10n.
+#8 12.24 Preparing to unpack .../34-gnupg-l10n_2.4.7-21+deb13u1_all.deb ...
+#8 12.25 Unpacking gnupg-l10n (2.4.7-21+deb13u1) ...
+#8 12.40 Selecting previously unselected package gpg.
+#8 12.40 Preparing to unpack .../35-gpg_2.4.7-21+deb13u1+b4_amd64.deb ...
+#8 12.41 Unpacking gpg (2.4.7-21+deb13u1+b4) ...
+#8 12.51 Selecting previously unselected package pinentry-curses.
+#8 12.51 Preparing to unpack .../36-pinentry-curses_1.3.1-2_amd64.deb ...
+#8 12.52 Unpacking pinentry-curses (1.3.1-2) ...
+#8 12.91 Selecting previously unselected package gpg-agent.
+#8 12.91 Preparing to unpack .../37-gpg-agent_2.4.7-21+deb13u1+b4_amd64.deb ...
+#8 12.92 Unpacking gpg-agent (2.4.7-21+deb13u1+b4) ...
+#8 13.02 Selecting previously unselected package gpgsm.
+#8 13.02 Preparing to unpack .../38-gpgsm_2.4.7-21+deb13u1+b4_amd64.deb ...
+#8 13.03 Unpacking gpgsm (2.4.7-21+deb13u1+b4) ...
+#8 13.10 Selecting previously unselected package gnupg.
+#8 13.10 Preparing to unpack .../39-gnupg_2.4.7-21+deb13u1_all.deb ...
+#8 13.11 Unpacking gnupg (2.4.7-21+deb13u1) ...
+#8 13.20 Setting up libconfig-inifiles-perl (3.000003-3+deb13u1) ...
+#8 13.23 Setting up mysql-common (5.8+1.1.1) ...
+#8 13.55 update-alternatives: using /etc/mysql/my.cnf.fallback to provide /etc/mysql/my.cnf (my.cnf) in auto mode
+#8 13.57 Setting up libnpth0t64:amd64 (1.8-3) ...
+#8 13.60 Setting up libc-l10n (2.41-12+deb13u3) ...
+#8 13.64 Setting up libgpg-error0:amd64 (1.51-4) ...
+#8 13.67 Setting up libgdbm-compat4t64:amd64 (1.24-2) ...
+#8 13.70 Setting up libedit2:amd64 (3.1-20250104-1) ...
+#8 13.74 Setting up libgcrypt20:amd64 (1.11.0-7+deb13u1) ...
+#8 13.77 Setting up locales (2.41-12+deb13u3) ...
+#8 14.34 debconf: unable to initialize frontend: Dialog
+#8 14.34 debconf: (TERM is not set, so the dialog frontend is not usable.)
+#8 14.34 debconf: falling back to frontend: Readline
+#8 14.35 debconf: unable to initialize frontend: Readline
+#8 14.35 debconf: (This frontend requires a controlling tty.)
+#8 14.35 debconf: falling back to frontend: Teletype
+#8 14.35 debconf: unable to initialize frontend: Teletype
+#8 14.35 debconf: (This frontend requires a controlling tty.)
+#8 14.35 debconf: falling back to frontend: Noninteractive
+#8 14.65 Generating locales (this might take a while)...
+#8 14.66 Generation complete.
+#8 14.74 Setting up libsasl2-modules-db:amd64 (2.1.28+dfsg1-9) ...
+#8 14.79 Setting up mariadb-common (1:11.8.6-0+deb13u1) ...
+#8 14.81 update-alternatives: using /etc/mysql/mariadb.cnf to provide /etc/mysql/my.cnf (my.cnf) in auto mode
+#8 14.83 Setting up gnupg-l10n (2.4.7-21+deb13u1) ...
+#8 14.86 Setting up libncurses6:amd64 (6.5+20250216-2) ...
+#8 14.90 Setting up libp11-kit0:amd64 (0.25.5-3) ...
+#8 14.93 Setting up libunistring5:amd64 (1.3-2) ...
+#8 14.96 Setting up libmariadb3:amd64 (1:11.8.6-0+deb13u1) ...
+#8 15.70 Setting up libsasl2-2:amd64 (2.1.28+dfsg1-9) ...
+#8 15.73 Setting up libpcre2-posix3:amd64 (10.46-1~deb13u1) ...
+#8 15.75 Setting up perl-modules-5.40 (5.40.1-6) ...
+#8 15.79 Setting up libassuan9:amd64 (3.0.2-2) ...
+#8 15.93 Setting up gpgconf (2.4.7-21+deb13u1+b4) ...
+#8 15.95 Setting up libtasn1-6:amd64 (4.20.0-2+deb13u1) ...
+#8 15.98 Setting up libldap2:amd64 (2.6.10+dfsg-1) ...
+#8 16.02 Setting up libksba8:amd64 (1.6.7-2+b1) ...
+#8 16.55 Setting up pinentry-curses (1.3.1-2) ...
+#8 16.67 Setting up gpg-agent (2.4.7-21+deb13u1+b4) ...
+#8 17.24 Setting up gpgsm (2.4.7-21+deb13u1+b4) ...
+#8 17.31 Setting up libidn2-0:amd64 (2.3.8-2) ...
+#8 17.35 Setting up mariadb-client-core (1:11.8.6-0+deb13u1) ...
+#8 17.97 Setting up libperl5.40:amd64 (5.40.1-6) ...
+#8 18.05 Setting up perl (5.40.1-6) ...
+#8 18.13 Setting up gpg (2.4.7-21+deb13u1+b4) ...
+#8 18.31 Setting up libgnutls30t64:amd64 (3.8.9-3+deb13u4) ...
+#8 18.33 Setting up mariadb-client (1:11.8.6-0+deb13u1) ...
+#8 18.42 Setting up mariadb-client-compat (1:11.8.6-0+deb13u1) ...
+#8 18.45 Setting up libpsl5t64:amd64 (0.21.2-1.1+b1) ...
+#8 18.48 Setting up dirmngr (2.4.7-21+deb13u1+b4) ...
+#8 18.62 Setting up gnupg (2.4.7-21+deb13u1) ...
+#8 18.73 Setting up default-mysql-client (1.1.1) ...
+#8 18.75 Setting up wget (1.25.0-2) ...
+#8 18.80 Processing triggers for libc-bin (2.41-12+deb13u3) ...
+#8 21.60 Hit:1 http://deb.debian.org/debian trixie InRelease
+#8 21.60 Hit:2 http://deb.debian.org/debian trixie-updates InRelease
+#8 21.61 Hit:3 http://deb.debian.org/debian-security trixie-security InRelease
+#8 21.96 Get:4 http://apt.postgresql.org/pub/repos/apt trixie-pgdg InRelease [241 kB]
+#8 22.00 Get:5 http://apt.postgresql.org/pub/repos/apt trixie-pgdg/main amd64 Packages [842 kB]
+#8 22.83 Fetched 1083 kB in 1s (737 kB/s)
+#8 22.83 Reading package lists...
+#8 23.35 Reading package lists...
+#8 23.85 Building dependency tree...
+#8 23.99 Reading state information...
+#8 24.19 The following additional packages will be installed:
+#8 24.19   libcom-err2 libgssapi-krb5-2 libk5crypto3 libkeyutils1 libkrb5-3
+#8 24.20   libkrb5support0 libpq5 postgresql-client-common sensible-utils
+#8 24.20 Suggested packages:
+#8 24.20   krb5-doc krb5-user libpq-oauth postgresql-16 postgresql-doc-16
+#8 24.20 Recommended packages:
+#8 24.20   krb5-locales
+#8 24.27 The following NEW packages will be installed:
+#8 24.27   libcom-err2 libgssapi-krb5-2 libk5crypto3 libkeyutils1 libkrb5-3
+#8 24.27   libkrb5support0 libpq5 postgresql-client-16 postgresql-client-common
+#8 24.27   sensible-utils
+#8 24.30 0 upgraded, 10 newly installed, 0 to remove and 0 not upgraded.
+#8 24.30 Need to get 2926 kB of archives.
+#8 24.30 After this operation, 13.6 MB of additional disk space will be used.
+#8 24.30 Get:1 http://deb.debian.org/debian trixie/main amd64 sensible-utils all 0.0.25 [25.0 kB]
+#8 24.31 Get:2 http://apt.postgresql.org/pub/repos/apt trixie-pgdg/main amd64 libpq5 amd64 18.6-1.pgdg13+2 [266 kB]
+#8 24.34 Get:3 http://deb.debian.org/debian trixie/main amd64 libcom-err2 amd64 1.47.2-3+b11 [25.0 kB]
+#8 24.35 Get:4 http://deb.debian.org/debian trixie/main amd64 libkrb5support0 amd64 1.21.3-5+deb13u1 [33.1 kB]
+#8 24.35 Get:5 http://deb.debian.org/debian trixie/main amd64 libk5crypto3 amd64 1.21.3-5+deb13u1 [81.2 kB]
+#8 24.38 Get:6 http://deb.debian.org/debian trixie/main amd64 libkeyutils1 amd64 1.6.3-6 [9456 B]
+#8 24.38 Get:7 http://deb.debian.org/debian trixie/main amd64 libkrb5-3 amd64 1.21.3-5+deb13u1 [326 kB]
+#8 24.45 Get:8 http://apt.postgresql.org/pub/repos/apt trixie-pgdg/main amd64 postgresql-client-common all 293.pgdg13+1 [48.5 kB]
+#8 24.48 Get:9 http://deb.debian.org/debian trixie/main amd64 libgssapi-krb5-2 amd64 1.21.3-5+deb13u1 [138 kB]
+#8 24.49 Get:10 http://apt.postgresql.org/pub/repos/apt trixie-pgdg/main amd64 postgresql-client-16 amd64 16.15-1.pgdg13+2 [1973 kB]
+#8 25.60 debconf: unable to initialize frontend: Dialog
+#8 25.60 debconf: (TERM is not set, so the dialog frontend is not usable.)
+#8 25.60 debconf: falling back to frontend: Readline
+#8 25.61 debconf: unable to initialize frontend: Readline
+#8 25.61 debconf: (This frontend requires a controlling tty.)
+#8 25.61 debconf: falling back to frontend: Teletype
+#8 25.61 debconf: unable to initialize frontend: Teletype
+#8 25.61 debconf: (This frontend requires a controlling tty.)
+#8 25.61 debconf: falling back to frontend: Noninteractive
+#8 26.15 Fetched 2926 kB in 1s (2375 kB/s)
+#8 26.18 Selecting previously unselected package sensible-utils.
+#8 26.18 (Reading database ...
+(Reading database ... 5%
+(Reading database ... 10%
+(Reading database ... 15%
+(Reading database ... 20%
+(Reading database ... 25%
+(Reading database ... 30%
+(Reading database ... 35%
+(Reading database ... 40%
+(Reading database ... 45%
+(Reading database ... 50%
+(Reading database ... 55%
+(Reading database ... 60%
+(Reading database ... 65%
+(Reading database ... 70%
+(Reading database ... 75%
+(Reading database ... 80%
+(Reading database ... 85%
+(Reading database ... 90%
+(Reading database ... 95%
+(Reading database ... 100%
+(Reading database ... 9132 files and directories currently installed.)
+#8 26.18 Preparing to unpack .../0-sensible-utils_0.0.25_all.deb ...
+#8 26.19 Unpacking sensible-utils (0.0.25) ...
+#8 26.28 Selecting previously unselected package libcom-err2:amd64.
+#8 26.28 Preparing to unpack .../1-libcom-err2_1.47.2-3+b11_amd64.deb ...
+#8 26.30 Unpacking libcom-err2:amd64 (1.47.2-3+b11) ...
+#8 26.74 Selecting previously unselected package libkrb5support0:amd64.
+#8 26.74 Preparing to unpack .../2-libkrb5support0_1.21.3-5+deb13u1_amd64.deb ...
+#8 26.75 Unpacking libkrb5support0:amd64 (1.21.3-5+deb13u1) ...
+#8 26.84 Selecting previously unselected package libk5crypto3:amd64.
+#8 26.84 Preparing to unpack .../3-libk5crypto3_1.21.3-5+deb13u1_amd64.deb ...
+#8 26.86 Unpacking libk5crypto3:amd64 (1.21.3-5+deb13u1) ...
+#8 26.97 Selecting previously unselected package libkeyutils1:amd64.
+#8 26.97 Preparing to unpack .../4-libkeyutils1_1.6.3-6_amd64.deb ...
+#8 26.98 Unpacking libkeyutils1:amd64 (1.6.3-6) ...
+#8 27.40 Selecting previously unselected package libkrb5-3:amd64.
+#8 27.40 Preparing to unpack .../5-libkrb5-3_1.21.3-5+deb13u1_amd64.deb ...
+#8 27.41 Unpacking libkrb5-3:amd64 (1.21.3-5+deb13u1) ...
+#8 27.54 Selecting previously unselected package libgssapi-krb5-2:amd64.
+#8 27.54 Preparing to unpack .../6-libgssapi-krb5-2_1.21.3-5+deb13u1_amd64.deb ...
+#8 27.55 Unpacking libgssapi-krb5-2:amd64 (1.21.3-5+deb13u1) ...
+#8 27.63 Selecting previously unselected package libpq5:amd64.
+#8 27.63 Preparing to unpack .../7-libpq5_18.6-1.pgdg13+2_amd64.deb ...
+#8 27.64 Unpacking libpq5:amd64 (18.6-1.pgdg13+2) ...
+#8 27.85 Selecting previously unselected package postgresql-client-common.
+#8 27.85 Preparing to unpack .../8-postgresql-client-common_293.pgdg13+1_all.deb ...
+#8 27.86 Unpacking postgresql-client-common (293.pgdg13+1) ...
+#8 27.98 Selecting previously unselected package postgresql-client-16.
+#8 27.98 Preparing to unpack .../9-postgresql-client-16_16.15-1.pgdg13+2_amd64.deb ...
+#8 28.00 Unpacking postgresql-client-16 (16.15-1.pgdg13+2) ...
+#8 28.15 Setting up postgresql-client-common (293.pgdg13+1) ...
+#8 28.22 Setting up libkeyutils1:amd64 (1.6.3-6) ...
+#8 28.24 Setting up libcom-err2:amd64 (1.47.2-3+b11) ...
+#8 28.60 Setting up libkrb5support0:amd64 (1.21.3-5+deb13u1) ...
+#8 28.64 Setting up libk5crypto3:amd64 (1.21.3-5+deb13u1) ...
+#8 28.68 Setting up sensible-utils (0.0.25) ...
+#8 28.71 Setting up libkrb5-3:amd64 (1.21.3-5+deb13u1) ...
+#8 28.74 Setting up libgssapi-krb5-2:amd64 (1.21.3-5+deb13u1) ...
+#8 28.89 Setting up libpq5:amd64 (18.6-1.pgdg13+2) ...
+#8 28.92 Setting up postgresql-client-16 (16.15-1.pgdg13+2) ...
+#8 29.17 update-alternatives: using /usr/share/postgresql/16/man/man1/psql.1.gz to provide /usr/share/man/man1/psql.1.gz (psql.1.gz) in auto mode
+#8 29.22 Processing triggers for libc-bin (2.41-12+deb13u3) ...
+#8 29.79 Reading package lists...
+#8 30.30 Building dependency tree...
+#8 30.45 Reading state information...
+#8 30.62 The following packages will be REMOVED:
+#8 30.62   dirmngr* gnupg* gnupg-l10n* gpg* gpg-agent* gpgconf* gpgsm* libassuan9*
+#8 30.62   libgcrypt20* libgnutls30t64* libgpg-error0* libksba8* libnpth0t64*
+#8 30.62   libp11-kit0* libpsl5t64* libtasn1-6* pinentry-curses* wget*
+#8 30.75 0 upgraded, 0 newly installed, 18 to remove and 0 not upgraded.
+#8 30.75 After this operation, 22.8 MB disk space will be freed.
+#8 30.77 (Reading database ...
+(Reading database ... 5%
+(Reading database ... 10%
+(Reading database ... 15%
+(Reading database ... 20%
+(Reading database ... 25%
+(Reading database ... 30%
+(Reading database ... 35%
+(Reading database ... 40%
+(Reading database ... 45%
+(Reading database ... 50%
+(Reading database ... 55%
+(Reading database ... 60%
+(Reading database ... 65%
+(Reading database ... 70%
+(Reading database ... 75%
+(Reading database ... 80%
+(Reading database ... 85%
+(Reading database ... 90%
+(Reading database ... 95%
+(Reading database ... 100%
+(Reading database ... 9646 files and directories currently installed.)
+#8 30.77 Removing gnupg (2.4.7-21+deb13u1) ...
+#8 30.96 Removing dirmngr (2.4.7-21+deb13u1+b4) ...
+#8 31.06 Removing gnupg-l10n (2.4.7-21+deb13u1) ...
+#8 31.55 Removing gpg (2.4.7-21+deb13u1+b4) ...
+#8 31.63 Removing gpg-agent (2.4.7-21+deb13u1+b4) ...
+#8 31.72 Removing gpgsm (2.4.7-21+deb13u1+b4) ...
+#8 32.23 Removing gpgconf (2.4.7-21+deb13u1+b4) ...
+#8 32.36 Removing pinentry-curses (1.3.1-2) ...
+#8 32.86 Removing libassuan9:amd64 (3.0.2-2) ...
+#8 32.98 Removing libgcrypt20:amd64 (1.11.0-7+deb13u1) ...
+#8 33.09 Removing wget (1.25.0-2) ...
+#8 33.28 Removing libgnutls30t64:amd64 (3.8.9-3+deb13u4) ...
+#8 33.42 Removing libksba8:amd64 (1.6.7-2+b1) ...
+#8 33.76 Removing libgpg-error0:amd64 (1.51-4) ...
+#8 33.99 Removing libnpth0t64:amd64 (1.8-3) ...
+#8 34.11 Removing libp11-kit0:amd64 (0.25.5-3) ...
+#8 34.25 Removing libpsl5t64:amd64 (0.21.2-1.1+b1) ...
+#8 34.35 Removing libtasn1-6:amd64 (4.20.0-2+deb13u1) ...
+#8 34.53 Processing triggers for libc-bin (2.41-12+deb13u3) ...
+#8 34.62 (Reading database ...
+(Reading database ... 5%
+(Reading database ... 10%
+(Reading database ... 15%
+(Reading database ... 20%
+(Reading database ... 25%
+(Reading database ... 30%
+(Reading database ... 35%
+(Reading database ... 40%
+(Reading database ... 45%
+(Reading database ... 50%
+(Reading database ... 55%
+(Reading database ... 60%
+(Reading database ... 65%
+(Reading database ... 70%
+(Reading database ... 75%
+(Reading database ... 80%
+(Reading database ... 85%
+(Reading database ... 90%
+(Reading database ... 95%
+(Reading database ... 100%
+(Reading database ... 9268 files and directories currently installed.)
+#8 34.63 Purging configuration files for gpg-agent (2.4.7-21+deb13u1+b4) ...
+#8 34.76 Purging configuration files for wget (1.25.0-2) ...
+#8 35.35 Purging configuration files for dirmngr (2.4.7-21+deb13u1+b4) ...
+#8 35.54 Purging configuration files for gpg (2.4.7-21+deb13u1+b4) ...
+#8 35.74 Generating locales (this might take a while)...
+#8 35.74   ko_KR.UTF-8... done
+#8 36.82 Generation complete.
+#8 DONE 40.8s
+
+#9 [ 4/16] COPY unit/feature-0002-agent-core/src/requirements.txt ./requirements.txt
+#9 DONE 0.3s
+
+#10 [ 5/16] RUN pip install --no-cache-dir -r requirements.txt
+#10 2.251 Collecting openai>=1.0.0 (from -r requirements.txt (line 1))
+#10 2.300   Downloading openai-3.11.0-py3-none-any.whl.metadata (41 kB)
+#10 2.307      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 41.7/41.7 kB 5.8 MB/s eta 0:00:00
+#10 2.351 Collecting mysql-connector-python>=8.0.0 (from -r requirements.txt (line 2))
+#10 2.361   Downloading mysql_connector_python-26.7.0-cp311-cp311-manylinux_2_28_x86_64.whl.metadata (11 kB)
+#10 2.421 Collecting rich>=13.0.0 (from -r requirements.txt (line 3))
+#10 2.431   Downloading rich-15.0.0-py3-none-any.whl.metadata (18 kB)
+#10 2.514 Collecting fastapi>=0.110.0 (from -r requirements.txt (line 4))
+#10 2.523   Downloading fastapi-0.141.1-py3-none-any.whl.metadata (27 kB)
+#10 2.567 Collecting uvicorn>=0.27.0 (from uvicorn[standard]>=0.27.0->-r requirements.txt (line 5))
+#10 2.576   Downloading uvicorn-0.52.4-py3-none-any.whl.metadata (6.6 kB)
+#10 2.841 Collecting cryptography>=42.0.0 (from -r requirements.txt (line 6))
+#10 2.851   Downloading cryptography-50.0.1-cp311-abi3-manylinux_2_34_x86_64.whl.metadata (4.3 kB)
+#10 2.886 Collecting psycopg>=3.1 (from psycopg[binary]>=3.1->-r requirements.txt (line 9))
+#10 2.896   Downloading psycopg-3.3.5-py3-none-any.whl.metadata (4.3 kB)
+#10 2.916 Collecting pgvector>=0.2.4 (from -r requirements.txt (line 10))
+#10 2.925   Downloading pgvector-0.5.0-py3-none-any.whl.metadata (19 kB)
+#10 3.323 Collecting boto3>=1.34.0 (from -r requirements.txt (line 13))
+#10 3.332   Downloading boto3-1.43.91-py3-none-any.whl.metadata (6.6 kB)
+#10 3.858 Collecting botocore>=1.34.0 (from -r requirements.txt (line 14))
+#10 3.868   Downloading botocore-1.43.91-py3-none-any.whl.metadata (5.6 kB)
+#10 3.914 Collecting chardet>=5.0.0 (from -r requirements.txt (line 17))
+#10 3.924   Downloading chardet-7.6.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (9.6 kB)
+#10 3.952 Collecting openpyxl>=3.1.0 (from -r requirements.txt (line 18))
+#10 3.963   Downloading openpyxl-3.1.5-py2.py3-none-any.whl.metadata (2.5 kB)
+#10 3.989 Collecting python-multipart>=0.0.9 (from -r requirements.txt (line 24))
+#10 3.998   Downloading python_multipart-0.0.32-py3-none-any.whl.metadata (2.1 kB)
+#10 4.212 Collecting sqlglot<28.0.0,>=23.0.0 (from -r requirements.txt (line 28))
+#10 4.222   Downloading sqlglot-27.29.0-py3-none-any.whl.metadata (20 kB)
+#10 4.335 Collecting pymssql>=2.2.0 (from -r requirements.txt (line 32))
+#10 4.345   Downloading pymssql-2.4.1-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (35 kB)
+#10 4.587 Collecting numpy>=1.26.0 (from -r requirements.txt (line 36))
+#10 4.596   Downloading numpy-2.4.6-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (6.6 kB)
+#10 4.629 Collecting mcp>=1.9.0 (from -r requirements.txt (line 44))
+#10 4.638   Downloading mcp-2.2.0-py3-none-any.whl.metadata (7.8 kB)
+#10 4.743 Collecting anyio<5,>=4.10.0 (from openai>=1.0.0->-r requirements.txt (line 1))
+#10 4.752   Downloading anyio-4.15.1-py3-none-any.whl.metadata (4.7 kB)
+#10 4.780 Collecting httpx2<3,>=2.7.0 (from openai>=1.0.0->-r requirements.txt (line 1))
+#10 4.789   Downloading httpx2-2.12.0-py3-none-any.whl.metadata (9.5 kB)
+#10 4.880 Collecting jiter<1,>=0.16.0 (from openai>=1.0.0->-r requirements.txt (line 1))
+#10 4.890   Downloading jiter-0.16.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (5.2 kB)
+#10 5.038 Collecting pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,<3,>=1.10.13 (from openai>=1.0.0->-r requirements.txt (line 1))
+#10 5.048   Downloading pydantic-2.13.5-py3-none-any.whl.metadata (110 kB)
+#10 5.056      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 110.2/110.2 kB 16.0 MB/s eta 0:00:00
+#10 5.077 Collecting sniffio (from openai>=1.0.0->-r requirements.txt (line 1))
+#10 5.086   Downloading sniffio-1.3.1-py3-none-any.whl.metadata (3.9 kB)
+#10 5.114 Collecting typing-extensions<5,>=4.14 (from openai>=1.0.0->-r requirements.txt (line 1))
+#10 5.123   Downloading typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+#10 5.153 Collecting markdown-it-py>=2.2.0 (from rich>=13.0.0->-r requirements.txt (line 3))
+#10 5.162   Downloading markdown_it_py-4.2.0-py3-none-any.whl.metadata (7.4 kB)
+#10 5.190 Collecting pygments<3.0.0,>=2.13.0 (from rich>=13.0.0->-r requirements.txt (line 3))
+#10 5.200   Downloading pygments-2.21.0-py3-none-any.whl.metadata (2.5 kB)
+#10 5.259 Collecting starlette>=0.46.0 (from fastapi>=0.110.0->-r requirements.txt (line 4))
+#10 5.268   Downloading starlette-1.6.0-py3-none-any.whl.metadata (6.4 kB)
+#10 5.309 Collecting typing-inspection>=0.4.2 (from fastapi>=0.110.0->-r requirements.txt (line 4))
+#10 5.318   Downloading typing_inspection-0.4.4-py3-none-any.whl.metadata (2.6 kB)
+#10 5.335 Collecting annotated-doc>=0.0.2 (from fastapi>=0.110.0->-r requirements.txt (line 4))
+#10 5.344   Downloading annotated_doc-0.0.5-py3-none-any.whl.metadata (6.5 kB)
+#10 5.380 Collecting click>=7.0 (from uvicorn>=0.27.0->uvicorn[standard]>=0.27.0->-r requirements.txt (line 5))
+#10 5.389   Downloading click-8.5.0-py3-none-any.whl.metadata (2.6 kB)
+#10 5.407 Collecting h11>=0.8 (from uvicorn>=0.27.0->uvicorn[standard]>=0.27.0->-r requirements.txt (line 5))
+#10 5.416   Downloading h11-0.16.0-py3-none-any.whl.metadata (8.3 kB)
+#10 5.540 Collecting cffi>=2.0.0 (from cryptography>=42.0.0->-r requirements.txt (line 6))
+#10 5.549   Downloading cffi-2.1.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (2.5 kB)
+#10 5.739 Collecting jmespath<2.0.0,>=0.7.1 (from boto3>=1.34.0->-r requirements.txt (line 13))
+#10 5.748   Downloading jmespath-1.1.0-py3-none-any.whl.metadata (7.6 kB)
+#10 5.782 Collecting s3transfer<0.20.0,>=0.19.0 (from boto3>=1.34.0->-r requirements.txt (line 13))
+#10 5.792   Downloading s3transfer-0.19.2-py3-none-any.whl.metadata (1.7 kB)
+#10 5.820 Collecting python-dateutil<3.0.0,>=2.1 (from botocore>=1.34.0->-r requirements.txt (line 14))
+#10 5.830   Downloading python_dateutil-2.9.0.post0-py2.py3-none-any.whl.metadata (8.4 kB)
+#10 5.887 Collecting urllib3!=2.2.0,<3,>=1.25.4 (from botocore>=1.34.0->-r requirements.txt (line 14))
+#10 5.897   Downloading urllib3-2.7.0-py3-none-any.whl.metadata (6.9 kB)
+#10 5.925 Collecting et-xmlfile (from openpyxl>=3.1.0->-r requirements.txt (line 18))
+#10 5.935   Downloading et_xmlfile-2.0.0-py3-none-any.whl.metadata (2.7 kB)
+#10 6.028 Collecting jsonschema>=4.20.0 (from mcp>=1.9.0->-r requirements.txt (line 44))
+#10 6.038   Downloading jsonschema-4.26.0-py3-none-any.whl.metadata (7.6 kB)
+#10 6.062 Collecting mcp-types==2.2.0 (from mcp>=1.9.0->-r requirements.txt (line 44))
+#10 6.072   Downloading mcp_types-2.2.0-py3-none-any.whl.metadata (1.9 kB)
+#10 6.118 Collecting opentelemetry-api>=1.28.0 (from mcp>=1.9.0->-r requirements.txt (line 44))
+#10 6.128   Downloading opentelemetry_api-1.44.0-py3-none-any.whl.metadata (1.4 kB)
+#10 6.185 Collecting pyjwt>=2.10.1 (from pyjwt[crypto]>=2.10.1->mcp>=1.9.0->-r requirements.txt (line 44))
+#10 6.195   Downloading pyjwt-2.13.0-py3-none-any.whl.metadata (3.4 kB)
+#10 6.313 Collecting sse-starlette>=3.0.0 (from mcp>=1.9.0->-r requirements.txt (line 44))
+#10 6.322   Downloading sse_starlette-3.4.11-py3-none-any.whl.metadata (15 kB)
+#10 6.534 Collecting psycopg-binary==3.3.5 (from psycopg[binary]>=3.1->-r requirements.txt (line 9))
+#10 6.544   Downloading psycopg_binary-3.3.5-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (2.7 kB)
+#10 6.614 Collecting httptools>=0.8.0 (from uvicorn[standard]>=0.27.0->-r requirements.txt (line 5))
+#10 6.624   Downloading httptools-0.8.0-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl.metadata (3.5 kB)
+#10 6.653 Collecting python-dotenv>=0.13 (from uvicorn[standard]>=0.27.0->-r requirements.txt (line 5))
+#10 6.664   Downloading python_dotenv-1.2.3-py3-none-any.whl.metadata (29 kB)
+#10 6.710 Collecting pyyaml>=5.1 (from uvicorn[standard]>=0.27.0->-r requirements.txt (line 5))
+#10 6.720   Downloading pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.4 kB)
+#10 6.770 Collecting uvloop>=0.15.1 (from uvicorn[standard]>=0.27.0->-r requirements.txt (line 5))
+#10 6.779   Downloading uvloop-0.22.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (4.9 kB)
+#10 6.859 Collecting watchfiles>=0.20 (from uvicorn[standard]>=0.27.0->-r requirements.txt (line 5))
+#10 6.868   Downloading watchfiles-1.2.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (4.9 kB)
+#10 6.984 Collecting websockets>=13.0 (from uvicorn[standard]>=0.27.0->-r requirements.txt (line 5))
+#10 6.993   Downloading websockets-17.1-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl.metadata (6.3 kB)
+#10 7.023 Collecting idna>=2.8 (from anyio<5,>=4.10.0->openai>=1.0.0->-r requirements.txt (line 1))
+#10 7.033   Downloading idna-3.19-py3-none-any.whl.metadata (9.2 kB)
+#10 7.071 Collecting pycparser (from cffi>=2.0.0->cryptography>=42.0.0->-r requirements.txt (line 6))
+#10 7.081   Downloading pycparser-3.0-py3-none-any.whl.metadata (8.2 kB)
+#10 7.128 Collecting httpcore2==2.12.0 (from httpx2<3,>=2.7.0->openai>=1.0.0->-r requirements.txt (line 1))
+#10 7.138   Downloading httpcore2-2.12.0-py3-none-any.whl.metadata (25 kB)
+#10 7.163 Collecting truststore>=0.10 (from httpx2<3,>=2.7.0->openai>=1.0.0->-r requirements.txt (line 1))
+#10 7.172   Downloading truststore-0.10.4-py3-none-any.whl.metadata (4.4 kB)
+#10 7.228 Collecting attrs>=22.2.0 (from jsonschema>=4.20.0->mcp>=1.9.0->-r requirements.txt (line 44))
+#10 7.238   Downloading attrs-26.1.0-py3-none-any.whl.metadata (8.8 kB)
+#10 7.260 Collecting jsonschema-specifications>=2023.03.6 (from jsonschema>=4.20.0->mcp>=1.9.0->-r requirements.txt (line 44))
+#10 7.270   Downloading jsonschema_specifications-2025.9.1-py3-none-any.whl.metadata (2.9 kB)
+#10 7.315 Collecting referencing>=0.28.4 (from jsonschema>=4.20.0->mcp>=1.9.0->-r requirements.txt (line 44))
+#10 7.324   Downloading referencing-0.37.0-py3-none-any.whl.metadata (2.8 kB)
+#10 7.749 Collecting rpds-py>=0.25.0 (from jsonschema>=4.20.0->mcp>=1.9.0->-r requirements.txt (line 44))
+#10 7.758   Downloading rpds_py-2026.6.3-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (4.1 kB)
+#10 7.795 Collecting mdurl~=0.1 (from markdown-it-py>=2.2.0->rich>=13.0.0->-r requirements.txt (line 3))
+#10 7.804   Downloading mdurl-0.1.2-py3-none-any.whl.metadata (1.6 kB)
+#10 7.836 Collecting annotated-types>=0.6.0 (from pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,<3,>=1.10.13->openai>=1.0.0->-r requirements.txt (line 1))
+#10 7.846   Downloading annotated_types-0.8.0-py3-none-any.whl.metadata (15 kB)
+#10 8.699 Collecting pydantic-core==2.46.5 (from pydantic!=2.0.*,!=2.1.*,!=2.2.*,!=2.3.*,<3,>=1.10.13->openai>=1.0.0->-r requirements.txt (line 1))
+#10 8.708   Downloading pydantic_core-2.46.5-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (6.6 kB)
+#10 8.782 Collecting six>=1.5 (from python-dateutil<3.0.0,>=2.1->botocore>=1.34.0->-r requirements.txt (line 14))
+#10 8.791   Downloading six-1.17.0-py2.py3-none-any.whl.metadata (1.7 kB)
+#10 9.193 Downloading openai-3.11.0-py3-none-any.whl (1.7 MB)
+#10 9.224    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.7/1.7 MB 59.7 MB/s eta 0:00:00
+#10 9.234 Downloading mysql_connector_python-26.7.0-cp311-cp311-manylinux_2_28_x86_64.whl (21.7 MB)
+#10 9.440    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 21.7/21.7 MB 114.7 MB/s eta 0:00:00
+#10 9.450 Downloading rich-15.0.0-py3-none-any.whl (310 kB)
+#10 9.453    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 310.7/310.7 kB 510.6 MB/s eta 0:00:00
+#10 9.463 Downloading fastapi-0.141.1-py3-none-any.whl (131 kB)
+#10 9.465    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 132.0/132.0 kB 519.2 MB/s eta 0:00:00
+#10 9.475 Downloading uvicorn-0.52.4-py3-none-any.whl (79 kB)
+#10 9.477    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 79.9/79.9 kB 475.3 MB/s eta 0:00:00
+#10 9.487 Downloading cryptography-50.0.1-cp311-abi3-manylinux_2_34_x86_64.whl (4.7 MB)
+#10 9.528    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.7/4.7 MB 124.7 MB/s eta 0:00:00
+#10 9.539 Downloading psycopg-3.3.5-py3-none-any.whl (213 kB)
+#10 9.541    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 213.6/213.6 kB 486.7 MB/s eta 0:00:00
+#10 9.550 Downloading pgvector-0.5.0-py3-none-any.whl (30 kB)
+#10 9.560 Downloading boto3-1.43.91-py3-none-any.whl (140 kB)
+#10 9.562    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 140.0/140.0 kB 441.3 MB/s eta 0:00:00
+#10 9.572 Downloading botocore-1.43.91-py3-none-any.whl (15.8 MB)
+#10 9.709    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 15.8/15.8 MB 114.9 MB/s eta 0:00:00
+#10 9.721 Downloading chardet-7.6.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (1.5 MB)
+#10 9.736    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.5/1.5 MB 121.8 MB/s eta 0:00:00
+#10 9.747 Downloading openpyxl-3.1.5-py2.py3-none-any.whl (250 kB)
+#10 9.750    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 250.9/250.9 kB 522.1 MB/s eta 0:00:00
+#10 9.759 Downloading python_multipart-0.0.32-py3-none-any.whl (30 kB)
+#10 9.769 Downloading sqlglot-27.29.0-py3-none-any.whl (526 kB)
+#10 9.774    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 526.1/526.1 kB 158.0 MB/s eta 0:00:00
+#10 9.783 Downloading pymssql-2.4.1-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (3.2 MB)
+#10 9.827    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.2/3.2 MB 76.5 MB/s eta 0:00:00
+#10 9.837 Downloading numpy-2.4.6-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (16.9 MB)
+#10 10.01    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 16.9/16.9 MB 110.3 MB/s eta 0:00:00
+#10 10.02 Downloading mcp-2.2.0-py3-none-any.whl (365 kB)
+#10 10.02    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 365.7/365.7 kB 489.6 MB/s eta 0:00:00
+#10 10.03 Downloading mcp_types-2.2.0-py3-none-any.whl (69 kB)
+#10 10.04    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 69.1/69.1 kB 451.5 MB/s eta 0:00:00
+#10 10.06 Downloading psycopg_binary-3.3.5-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (5.3 MB)
+#10 10.10    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5.3/5.3 MB 111.9 MB/s eta 0:00:00
+#10 10.11 Downloading annotated_doc-0.0.5-py3-none-any.whl (5.3 kB)
+#10 10.12 Downloading anyio-4.15.1-py3-none-any.whl (132 kB)
+#10 10.13    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 132.1/132.1 kB 495.1 MB/s eta 0:00:00
+#10 10.14 Downloading cffi-2.1.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (217 kB)
+#10 10.14    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 217.8/217.8 kB 550.4 MB/s eta 0:00:00
+#10 10.15 Downloading click-8.5.0-py3-none-any.whl (125 kB)
+#10 10.15    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 125.3/125.3 kB 396.3 MB/s eta 0:00:00
+#10 10.16 Downloading h11-0.16.0-py3-none-any.whl (37 kB)
+#10 10.17 Downloading httptools-0.8.0-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl (464 kB)
+#10 10.18    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 464.7/464.7 kB 182.1 MB/s eta 0:00:00
+#10 10.18 Downloading httpx2-2.12.0-py3-none-any.whl (95 kB)
+#10 10.19    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 95.4/95.4 kB 427.4 MB/s eta 0:00:00
+#10 10.20 Downloading httpcore2-2.12.0-py3-none-any.whl (83 kB)
+#10 10.20    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 83.1/83.1 kB 477.3 MB/s eta 0:00:00
+#10 10.21 Downloading jiter-0.16.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (347 kB)
+#10 10.21    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 347.1/347.1 kB 217.2 MB/s eta 0:00:00
+#10 10.22 Downloading jmespath-1.1.0-py3-none-any.whl (20 kB)
+#10 10.23 Downloading jsonschema-4.26.0-py3-none-any.whl (90 kB)
+#10 10.23    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 90.6/90.6 kB 491.1 MB/s eta 0:00:00
+#10 10.24 Downloading markdown_it_py-4.2.0-py3-none-any.whl (91 kB)
+#10 10.24    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 91.7/91.7 kB 500.3 MB/s eta 0:00:00
+#10 10.25 Downloading opentelemetry_api-1.44.0-py3-none-any.whl (60 kB)
+#10 10.25    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 60.0/60.0 kB 453.6 MB/s eta 0:00:00
+#10 10.26 Downloading pydantic-2.13.5-py3-none-any.whl (472 kB)
+#10 10.27    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 472.6/472.6 kB 158.6 MB/s eta 0:00:00
+#10 10.28 Downloading pydantic_core-2.46.5-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.1 MB)
+#10 10.29    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.1/2.1 MB 124.6 MB/s eta 0:00:00
+#10 10.30 Downloading pygments-2.21.0-py3-none-any.whl (1.3 MB)
+#10 10.31    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.3/1.3 MB 131.9 MB/s eta 0:00:00
+#10 10.32 Downloading pyjwt-2.13.0-py3-none-any.whl (31 kB)
+#10 10.33 Downloading python_dateutil-2.9.0.post0-py2.py3-none-any.whl (229 kB)
+#10 10.33    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 229.9/229.9 kB 303.5 MB/s eta 0:00:00
+#10 10.34 Downloading python_dotenv-1.2.3-py3-none-any.whl (22 kB)
+#10 10.35 Downloading pyyaml-6.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (806 kB)
+#10 10.36    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 806.6/806.6 kB 141.6 MB/s eta 0:00:00
+#10 10.37 Downloading s3transfer-0.19.2-py3-none-any.whl (90 kB)
+#10 10.37    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 90.2/90.2 kB 363.8 MB/s eta 0:00:00
+#10 10.38 Downloading sse_starlette-3.4.11-py3-none-any.whl (17 kB)
+#10 10.39 Downloading starlette-1.6.0-py3-none-any.whl (75 kB)
+#10 10.39    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 76.0/76.0 kB 418.3 MB/s eta 0:00:00
+#10 10.40 Downloading typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+#10 10.40    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 45.6/45.6 kB 353.8 MB/s eta 0:00:00
+#10 10.41 Downloading typing_inspection-0.4.4-py3-none-any.whl (14 kB)
+#10 10.42 Downloading urllib3-2.7.0-py3-none-any.whl (131 kB)
+#10 10.42    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 131.1/131.1 kB 203.5 MB/s eta 0:00:00
+#10 10.43 Downloading uvloop-0.22.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (3.8 MB)
+#10 10.47    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.8/3.8 MB 122.3 MB/s eta 0:00:00
+#10 10.48 Downloading watchfiles-1.2.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (456 kB)
+#10 10.48    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 456.9/456.9 kB 163.8 MB/s eta 0:00:00
+#10 10.49 Downloading websockets-17.1-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl (224 kB)
+#10 10.49    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 224.3/224.3 kB 364.9 MB/s eta 0:00:00
+#10 10.50 Downloading et_xmlfile-2.0.0-py3-none-any.whl (18 kB)
+#10 10.51 Downloading sniffio-1.3.1-py3-none-any.whl (10 kB)
+#10 10.52 Downloading annotated_types-0.8.0-py3-none-any.whl (13 kB)
+#10 10.53 Downloading attrs-26.1.0-py3-none-any.whl (67 kB)
+#10 10.53    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 67.5/67.5 kB 465.4 MB/s eta 0:00:00
+#10 10.54 Downloading idna-3.19-py3-none-any.whl (68 kB)
+#10 10.54    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 68.5/68.5 kB 385.6 MB/s eta 0:00:00
+#10 10.55 Downloading jsonschema_specifications-2025.9.1-py3-none-any.whl (18 kB)
+#10 10.56 Downloading mdurl-0.1.2-py3-none-any.whl (10.0 kB)
+#10 10.57 Downloading referencing-0.37.0-py3-none-any.whl (26 kB)
+#10 10.58 Downloading rpds_py-2026.6.3-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (371 kB)
+#10 10.59    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 371.3/371.3 kB 553.1 MB/s eta 0:00:00
+#10 10.59 Downloading six-1.17.0-py2.py3-none-any.whl (11 kB)
+#10 10.60 Downloading truststore-0.10.4-py3-none-any.whl (18 kB)
+#10 10.61 Downloading pycparser-3.0-py3-none-any.whl (48 kB)
+#10 10.61    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 48.2/48.2 kB 198.4 MB/s eta 0:00:00
+#10 10.97 Installing collected packages: websockets, uvloop, urllib3, typing-extensions, truststore, sqlglot, sniffio, six, rpds-py, pyyaml, python-multipart, python-dotenv, pymssql, pyjwt, pygments, pycparser, psycopg-binary, pgvector, numpy, mysql-connector-python, mdurl, jmespath, jiter, idna, httptools, h11, et-xmlfile, click, chardet, attrs, annotated-types, annotated-doc, uvicorn, typing-inspection, referencing, python-dateutil, pydantic-core, psycopg, opentelemetry-api, openpyxl, markdown-it-py, httpcore2, cffi, anyio, watchfiles, starlette, rich, pydantic, jsonschema-specifications, httpx2, cryptography, botocore, sse-starlette, s3transfer, openai, mcp-types, jsonschema, fastapi, mcp, boto3
+#10 19.09 Successfully installed annotated-doc-0.0.5 annotated-types-0.8.0 anyio-4.15.1 attrs-26.1.0 boto3-1.43.91 botocore-1.43.91 cffi-2.1.1 chardet-7.6.0 click-8.5.0 cryptography-50.0.1 et-xmlfile-2.0.0 fastapi-0.141.1 h11-0.16.0 httpcore2-2.12.0 httptools-0.8.0 httpx2-2.12.0 idna-3.19 jiter-0.16.0 jmespath-1.1.0 jsonschema-4.26.0 jsonschema-specifications-2025.9.1 markdown-it-py-4.2.0 mcp-2.2.0 mcp-types-2.2.0 mdurl-0.1.2 mysql-connector-python-26.7.0 numpy-2.4.6 openai-3.11.0 openpyxl-3.1.5 opentelemetry-api-1.44.0 pgvector-0.5.0 psycopg-3.3.5 psycopg-binary-3.3.5 pycparser-3.0 pydantic-2.13.5 pydantic-core-2.46.5 pygments-2.21.0 pyjwt-2.13.0 pymssql-2.4.1 python-dateutil-2.9.0.post0 python-dotenv-1.2.3 python-multipart-0.0.32 pyyaml-6.0.3 referencing-0.37.0 rich-15.0.0 rpds-py-2026.6.3 s3transfer-0.19.2 six-1.17.0 sniffio-1.3.1 sqlglot-27.29.0 sse-starlette-3.4.11 starlette-1.6.0 truststore-0.10.4 typing-extensions-4.16.0 typing-inspection-0.4.4 urllib3-2.7.0 uvicorn-0.52.4 uvloop-0.22.1 watchfiles-1.2.0 websockets-17.1
+#10 19.09 WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv
+#10 19.17
+#10 19.17 [notice] A new release of pip is available: 24.0 -> 26.2.1
+#10 19.17 [notice] To update, run: pip install --upgrade pip
+#10 DONE 26.5s
+
+#11 [ 6/16] COPY unit/feature-0002-agent-core/src/agent_core.py ./agent_core.py
+#11 DONE 0.3s
+
+#12 [ 7/16] COPY unit/feature-0002-agent-core/src/modules /app/modules
+#12 DONE 0.2s
+
+#13 [ 8/16] COPY shared /app/shared
+#13 DONE 0.2s
+
+#14 [ 9/16] COPY unit/feature-0002-agent-core/src/scripts /app/scripts
+#14 DONE 0.1s
+
+#15 [10/16] COPY unit/feature-0002-agent-core/alembic.ini /app/alembic.ini
+#15 DONE 0.2s
+
+#16 [11/16] COPY unit/feature-0002-agent-core/alembic /app/alembic
+#16 DONE 0.2s
+
+#17 [12/16] COPY unit/feature-0003-agent-web-ui/src /app/web
+#17 DONE 0.4s
+
+#18 [13/16] COPY unit/feature-0041-external-ai-tool-surface/src/external_tool_mcp_http.py /app/ext_tools/external_tool_mcp_http.py
+#18 DONE 0.2s
+
+#19 [14/16] COPY unit/feature-0043-external-llm-bridge/src /app/bridge_src
+#19 DONE 0.2s
+
+#20 [15/16] RUN python3 /app/scripts/build_bridge_agent.py       --src /app/bridge_src/agent       --out /app/web/static/agent/bridge_agent.py       --stage-assets /app/bridge_src  && rm -rf /app/bridge_src
+#20 0.516 build_bridge_agent: /app/web/static/agent/bridge_agent.py (7313행) ← 20 모듈 · 자산 2개 배치
+#20 DONE 0.6s
+
+#21 [16/16] RUN python3 /app/scripts/inject_asset_stamp.py --root /app/web/static
+#21 0.835 inject_asset_stamp: stamp=a7922c7f93b1 files_rewritten=39 sidecar=/app/web/static/.asset-stamp
+#21 DONE 1.0s
+
+#22 exporting to image
+#22 exporting layers
+#22 exporting layers 3.3s done
+#22 writing image sha256:af0aeea71c9bcbf955b7689ca47f08b058b566341e2bc163a79155ff65507cf0 done
+#22 naming to docker.io/library/mysql-ai-web:ebf5e365 0.1s done
+#22 DONE 3.4s
+
+#23 resolving provenance for metadata file
+#23 DONE 0.0s
+open /tmp/.tmp-compose-build-metadataFile-3b013947-5678-4cde-90a2-6db28a472f42.json3074557443: no such file or directory
+
+[deploy-web] WARN: compose build EXIT=1 이나 이미지(mysql-ai-web:ebf5e365, GIT_COMMIT 일치) 정상 산출 — snap-docker metadata-file race 양성 무시(dc-build 동일 우회).
+
+[deploy-web] === 마이그레이션: expand/contract 게이트 + 적용 (swap 전, image=mysql-ai-web:ebf5e365) ===
+[migrate-lint] ✓ PASS head 단일성 검사:
+  head = 0059_attachment_relative_path (단일) · revision 59건 · 번호 중복 0 · MAX_MIGRATION 일치
+[migrate-lint] 검사 대상 revision 없음 (변경된 alembic revision 0건) → PASS
+적용할 pending 마이그레이션 없음 (current=0059_attachment_relative_path == head).
+[deploy-web] OK — baked 자산 스탬프 주입 확인(*.html/*.js 내 ?v=dev 잔존 0).
+[deploy-web] OK — 브리지 러너 배포본 존재·컴파일 확인(러너 + 설치 스크립트 2종).
+
+[deploy-web] === one-at-a-time 롤링 (항상 ≥1 healthy upstream) ===
+
+[deploy-web] === pre-drain: web-b 건강 확인 + web-a 진행 스트림 종료 대기 ===
+
+[deploy-web] === 엣지 후보 복귀 대기: web-b (Caddy passive 격리 해제 확인) ===
+[deploy-web]   web-b 엣지 후보 복귀 확인(fails=0 + Caddy→web-b /livez 200)
+[deploy-web]   web-a 조용함(active_streams=0 bridge_inflight=0, 드레인된 대기=0) — recreate 진행
+
+[deploy-web] === recreate web-a → ebf5e365 (one-at-a-time) ===
+ Container repo-web-a-1 Recreate
+ Container repo-web-a-1 Recreated
+ Container repo-web-a-1 Starting
+ Container repo-web-a-1 Started
+[deploy-web]   web-a ready (git_commit=ebf5e365)
+
+[deploy-web] === 엣지 후보 복귀 대기: web-a (Caddy passive 격리 해제 확인) ===
+[deploy-web]   web-a 엣지 후보 복귀 확인(fails=0 + Caddy→web-a /livez 200)
+
+[deploy-web] === pre-drain: web-a 건강 확인 + web-b 진행 스트림 종료 대기 ===
+
+[deploy-web] === 엣지 후보 복귀 대기: web-a (Caddy passive 격리 해제 확인) ===
+[deploy-web]   web-a 엣지 후보 복귀 확인(fails=0 + Caddy→web-a /livez 200)
+[deploy-web]   web-b 조용함(active_streams=0 bridge_inflight=0, 드레인된 대기=0) — recreate 진행
+
+[deploy-web] === recreate web-b → ebf5e365 (one-at-a-time) ===
+ Container repo-web-b-1 Recreate
+ Container repo-web-b-1 Recreated
+ Container repo-web-b-1 Starting
+ Container repo-web-b-1 Started
+[deploy-web]   web-b ready (git_commit=ebf5e365)
+
+[deploy-web] === 엣지 후보 복귀 대기: web-b (Caddy passive 격리 해제 확인) ===
+[deploy-web]   web-b 엣지 후보 복귀 확인(fails=0 + Caddy→web-b /livez 200)
+[deploy-web] scope=web — MCP 표면 롤아웃 skip(agent 이미지 미빌드).
+
+[deploy-web] === Caddyfile reconcile (변경 시에만 caddy recreate) ===
+[deploy-web] Caddyfile 무변경(sha 일치) + 이미지 일치 — caddy 유지(blip 0)
+
+[deploy-web] === post-cutover soak (90s) — edge + RestartCount 감시 ===
+[deploy-web] soak 통과 — 배포 안정.
+[deploy-web] WARN: 대화 스모크 skip — scope=web (ask-worker 미롤아웃). **대화 동작 미검증 상태로 종료된다.**
+[deploy-web] UI 완료 신호 게시 — release=ebf5e365 asset_stamp=a7922c7f93b1 (두 replica 일치).
+
+[deploy-web] === 배포 완료: ebf5e365 (scope=web — 적용·검증·미수행 결과는 각 단계 로그 참조) ===
+[deploy-web] quiesce: 미수행(scope=web — ask-worker/gateway 미접촉)
+[deploy-web] 브리지 연속성: 대기는 드레인으로 교대했고 진행 중 왕복은 완주했다(끊김 0).
+
+=== 배포 결과 확인 (변경 범위 기준 — AGENTS §15.4.1·PB-0009) ===
+ [1] 실제 교체한 서비스의 대상 SHA·ready·soak 결과를 확인한다. 배포 생략/실패를 PASS로
+     합산하지 않는다. 워커 코드도 바뀌었다면 --web-only만으로 전체 배포를 완료했다고 하지 않는다.
+ [2] 대화 스모크는 실제 실행 결과를 기록한다. scope=web에서 미수행이면 대화 동작 PASS를
+     선언하지 않는다. 워커 surge를 실행한 범위에서는 잔존 인스턴스가 없는지 확인한다.
+ [3] 변경 자산의 버전 스탬프와 실제 서빙 내용을 대조한다. 기존 DQA 앱·연결을 임의로 종료하거나
+     브라우저 강제 새로고침을 사용자에게 위임해 검증을 대신하지 않는다.
+ [4] 실제 사용자 화면/동작이 바뀌면 PB-0009의 변경 범위에 따라 DQA 클라이언트에서 확인한다.
+     일반 브라우저 전용 호환 분기는 해당 분기와 DQA 내부 미호출 대조로 검증한다.
+     설치 앱 미검증은 NOT-RUN과 사유·수행한 하위 검증을 기록한다.
+ [5] 무중단을 주장하려면 배포 시간대의 Caddy 엣지 오류와 ready/드레인 기록을 확인한다.
+     soak PASS만으로 배포 전체 기간의 요청 무손실이나 실제 대화 성공을 추정하지 않는다.
+================================================================================
