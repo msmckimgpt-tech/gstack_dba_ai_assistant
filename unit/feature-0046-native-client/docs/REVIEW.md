@@ -1510,3 +1510,12 @@ PR #1592(asset-stamp-reach)가 모듈 참조에 `?v=dev` 를 붙였는데 이 �
 - Related TASK: feature-0046-native-client / TASK-20260910-inapp-update
 - Trigger: 비정책 출하 문서 병합 정합, 제품 코드 변경 없음.
 - Verification: TASK/MODIFY/REVIEW 양쪽 신규 기록 보존, REPORT1.4.0 현재 상태 및1.3.1 과거 출하 경계 확인. origin/main 대비 native/web src diff0, conflict marker0. 새 제품 리뷰나 재배포 PASS를 뜻하지 않는다.
+
+## REV-20260910T172100-desktop-release [SKIPPED:non-policy-doc] — PASS
+
+- Trigger: non-policy-doc/출하·설치본 수용 기록만 변경. 제품 코드 추가 변경 없음.
+- Related TASK: TASK-20260910-desktop-codex
+- Verdict: PASS
+- Human Approval Needed: no
+- 기존 독립 3분야 리뷰를 유지한다. 추가 panel 대신 공개 채널·실서버·사용자 설치본 실제 대화 근거와 문서 링크를 대조했다.
+- [출하·설치본 수용](test-runs.d/20260910-desktop-codex-release.md).

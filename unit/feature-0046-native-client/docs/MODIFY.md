@@ -1097,3 +1097,8 @@ edit_policy: append-only
 - client/runner 동일 발견 규칙, 선택 pin 우선, 링크/reparse/비정규 파일 제외. 공식 CLI만 실행하며 자격증명·WindowsApps ACL은 변경하지 않는다.
 - 위치 source 계약과 표시, Windows 실제 동결 앱 하네스, 1.5.0 Setup/ZIP 빌드·릴리스노트 정합.
 - [검증](test-runs.d/20260910-desktop-codex.md). 배포·사용자 설치본 수용은 후속 출하 기록으로 구분한다.
+
+## CHG-20260910-desktop-release — 공개·사용자 설치본 수용 완료
+
+- PR #1679 / main 931a543e, 공개·설치 1.5.0. 앱 내부 갱신·정상 재실행·데스크톱 선택·실제 GPT-6-Astra 응답까지 기록했다.
+- TASK AC1~AC4 완료, REPORT/TEST/FUNCTION/STATUS 정합. 제품 소스 추가 변경 없음. [Run](test-runs.d/20260910-desktop-codex-release.md).

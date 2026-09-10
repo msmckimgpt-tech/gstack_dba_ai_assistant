@@ -37,8 +37,10 @@ Major: 현재 사용자가 연결 구현과 구성을 승인했다. 공식 CLI �
 ### Requested Scope
 
 - [x] 데스크톱 Codex 발견·선택·캐시 갱신 및 회귀
-- [ ] 실제 Windows 앱 로그인/응답·DQA 연결·사용 설정
-- [ ] 독립 리뷰·문서·출하·설치본 재검증
+- [x] 실제 Windows 앱 로그인/응답·DQA 연결·사용 설정
+- [x] 독립 리뷰·문서·출하·설치본 재검증
+
+완료: [PR #1679](https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant/pull/1679), 배포 `931a543e`, 공개/사용자 설치 1.5.0. 실제 DQA에서 desktop Codex GPT-6-Astra의 `DQA_DESKTOP_CODEX_OK` 답변 확인. 데스크톱 위치로 설정을 유지했다. [출하·설치본 수용](test-runs.d/20260910-desktop-codex-release.md).
 
 ## TASK-20260910-inapp-update
 
