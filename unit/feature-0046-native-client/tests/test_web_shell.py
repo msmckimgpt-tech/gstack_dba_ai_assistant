@@ -366,7 +366,10 @@ def test_bridge_coordinates_are_read_and_cleared():
     js = _BRIDGE_JS.read_text(encoding="utf-8")
     assert "sessionStorage.setItem(\"dqa.bridge\"" in js, "좌표를 보관하지 않는다"
     assert "history.replaceState" in js, "nonce 가 주소창·기록에 남는다"
-    assert 'q.delete("client_nonce")' in js
+    # ⚠ 변수명을 고정하지 않는다 (2026-09-10). 주소 정리가 `stripCoords()` 로 빠지면서
+    #   `q.` 가 `p.` 가 됐다 — 계약은 「두 좌표를 주소에서 지운다」이지 그 지역 변수 이름이
+    #   아니다. 이름을 잠그면 리팩터가 계약 위반처럼 보인다(§16.7 G-class).
+    assert 'delete("client_nonce")' in js and 'delete("client_port")' in js
 
 
 def test_storage_failure_does_not_break_the_app():

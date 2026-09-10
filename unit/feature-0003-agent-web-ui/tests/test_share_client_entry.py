@@ -356,8 +356,19 @@ def test_c9_the_share_page_cannot_plant_bridge_coordinates():
     js = _read_static("app/client-bridge.js")
     code = _code_only(js)
     assert "_PERSIST_SURFACES" in code, "보관 허용 표면 판정이 없다."
-    assert "if (persist) sessionStorage.setItem" in code, \
+    # ⚠ **한 줄 리터럴이 아니라 «분기 안에 있는가» 를 본다** (2026-09-10). 종전 단정은
+    #   `if (persist) sessionStorage.setItem` 한 줄이었는데, quota 실패를 다루려고 그 자리가
+    #   `if (persist) { try { … } catch … }` 로 바뀌면서 문자열이 깨졌다. 계약은 그대로다 —
+    #   **동기 보관은 persist 분기 안에서만** 일어난다. 그 위치를 구조로 확인한다.
+    #   모수는 **흡수 IIFE 안**이다 — 그 위의 `_adoptIfTheBridgeAcceptsIt` 도 저장하지만
+    #   그쪽은 «로컬 브리지가 수용할 때만» 이라 별개 방어선이다(그 계약은 아래 C9b·하네스).
+    absorb = code[code.index("clientBridge = (function"):]
+    branch = absorb.index("if (persist)")
+    else_at = absorb.index("} else {", branch)
+    assert 'sessionStorage.setItem("dqa.bridge"' in absorb[branch:else_at], \
         "익명 페이지에서도 좌표를 저장한다 — 링크 발신자가 origin 전역 상태를 심을 수 있다."
+    assert 'sessionStorage.setItem("dqa.bridge"' not in absorb[:branch], \
+        "분기 앞에서 이미 저장한다 — persist 판정이 무의미해진다."
     assert "getAll(\"client_nonce\").length > 1" in code, \
         "좌표 중복(쿼리 스머글링 신호)을 버리지 않는다."
 
