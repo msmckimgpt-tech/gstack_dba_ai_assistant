@@ -30,7 +30,7 @@ feature_status_note: 대화별 AI 세션 재사용과 그룹 assistant 문맥 �
 - [x] 구현·회귀 검증 — 집중226 PASS, Windows CLI 성공. 넓은 회귀의 기존 구조 테스트1 정합.
 - [x] backend/qa 패널 PASS
 - [x] 완료 게이트 — verify-completion pre-commit PASS
-- [ ] 병합·배포·설치본 확인
+- [x] 병합·배포·설치본 확인 — PR #1675, web 9ecd324e, 자동 갱신/캐시 보정/heartbeat 복귀 PASS. 원 쿼리 UI 재요청 NOT-RUN(상세 Run).
 
 
 ## TASK-20260909-session-continuity — 대화별 AI 세션 재사용과 그룹 문맥
