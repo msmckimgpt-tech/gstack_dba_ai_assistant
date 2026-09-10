@@ -717,7 +717,12 @@ console.log("\n[6] 호출 배선 — 두 명칭 변경 경로가 실제로 예�
   const unreadSyncSrc = extractFn(SIDEBAR, "_maybeSyncConversationListUnread") || "";
   ok("주기 unread 동기화도 데이터 버전을 올린다", unreadSyncSrc.includes("bumpSidebarDataVersion()"));
   ok("모션 게이트 단일 정의 공유(_prefersReducedMotion export)", /export function _prefersReducedMotion\(\)/.test(APPJS));
-  ok("sidebar 가 모션 게이트를 import", /_prefersReducedMotion,\n\} from "\.\.\/app\.js/.test(SIDEBAR));
+  // folder-newconv(2026-09-10): 종전 정규식은 `_prefersReducedMotion,` 이 import 블록의 **마지막
+  //   줄**일 것을 요구해, app.js 에서 심볼을 하나 더 가져오기만 해도(기능 무관) 깨졌다. 이 게이트가
+  //   지키려는 계약은 «모션 게이트를 자체 정의하지 않고 app.js 정본에서 가져온다» 이므로, 줄 배치가
+  //   아니라 그 사실을 본다.
+  ok("sidebar 가 모션 게이트를 import",
+    /import\s*\{[^}]*\b_prefersReducedMotion\b[^}]*\}\s*from\s*"\.\.\/app\.js/.test(SIDEBAR));
 
   // 렌더 wrapper 가 실제로 FLIP 을 감싸는지(예약 소비 → 렌더 → commit 순서).
   const wrapper = extractFn(SIDEBAR, "renderConversationList") || "";

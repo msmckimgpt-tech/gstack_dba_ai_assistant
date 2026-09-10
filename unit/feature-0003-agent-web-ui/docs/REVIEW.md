@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260910T064200-folder-newconv [SUBAGENT:ux+design] — PASS (P1 3건 전건 in-cycle 수정)
+
+- Related TASK: feature-0024-conversation-folders / TASK-20260910T064200-folder-newconv (코드 거주 feature-0003)
+- Trigger: `UI/button/layout` + `버튼/화면/레이아웃` keyword matched (§18.8 dispatch 표 3행 → ux · design)
+- Timestamp: 2026-09-10T06:42:00Z
+- Verdict: PASS — 고유 P1 3건(폴더 `aria-expanded` 강탈 · 폴더 관리 4기능 발견성 0 · 접힘 선호 영속 삭제) **전건 수정 후 확인 라운드 통과**(77 PASS / 0 FAIL · 뮤턴트 12종 KILL · 전수 신규 회귀 0)
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260910T064200-folder-newconv-ux-design.md
+- Critical issue (해소됨): `openFloatingMenu` 가 트리거(=폴더 헤더)의 `aria-expanded` 를 덮어쓰는데 복구 셀렉터는 이번 변경이 삭제한 `.conv-folder-menu-trigger` 를 가리켜, 접힌 폴더가 보조기술에 "펼쳐짐" 으로 박제되던 회귀 — `ownsAriaExpanded` 옵션 분리로 해소
+- 기각(근거 병기): `📝`→`＋` SVG 전환 · '···' 병치는 **사용자가 AskUserQuestion 에서 각각 선택·미선택한 항목**이므로 결정 우선. `conversation.create` 미보유 조합은 `TASK-20260723T180000` 의 권한 부여 구조상 발생하지 않음
+- 자기-검증 결함: 신규 하네스의 `openFloatingMenu` **stub 이 정본의 상태 기입을 재현하지 않아** 위 P1 에 눈이 멀어 있었다(58건 전부 초록인 채로) → 정본 주입으로 재작성, 58 → 77건
+- Human Approval Needed: no
+
 ## REV-20260910T134800-client-entry-gate-deploy [SKIPPED:non-policy-doc] — 배포 결과 원장 반영
 
 §18.8 dispatch 표 첫 행(비정책 doc-only). 코드·정책 문서 변경 0 — 직전 cycle 의 Run·TASK·REPORT
