@@ -9,6 +9,19 @@ source_of_truth: true
 
 # Modify Log
 
+## CHG-20260910T134800-client-entry-gate-deploy (배포 결과 원장 반영, docs-only)
+
+**변경**: `docs/test-runs.d/TASK-20260910T120000-client-entry-gate.md` 에 Run 4(라이브 도달성)·
+Run 5(실행 중인 사용자 DQA 앱 수동 관측) append · `docs/TASK.md` Requested Scope 마감 ·
+`docs/REPORT.md` 배포 문장.
+
+**사유**: 직전 cycle 의 Run 은 「배포 후 확인하고 이 파일에 append 한다」로 끝나 있었다.
+배포(`4b2dd68c`, asset_stamp `485a9a2696e0`)가 끝났고 라이브 6건 PASS·앱 창 관측 2회를
+얻었으므로, 그 사실을 원장에 넣지 않으면 Run 이 **stale 한 미완 상태**로 남는다(§5.6).
+
+**정직 표기**: Run 5 는 「앱이 지금 정상 화면」이라는 관측이지 「재적재를 거쳐 정상」이 아니다 —
+접근 로그가 없어 재적재 여부를 가릴 수단이 없었고, 재적재 경로 자체는 Run 4 L5 가 별도로 쟀다.
+
 ## CHG-20260910T120000-client-entry-gate (일반 브라우저 → 설치 안내, feature)
 
 **변경**:

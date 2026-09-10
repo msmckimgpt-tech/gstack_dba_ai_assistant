@@ -61,3 +61,44 @@ Alternative: Run 2 가 **같은 Chromium 엔진**에서 배포 파일 원본으�
 Next: 배포 후 실행 중인 DQA 앱이 자동 갱신(`ui-refresh.js`)으로 새 자산을 받은 뒤에도
   대화 화면에 머무르는지(설치 안내로 튕기지 않는지) 확인하고 이 파일에 append 한다.
 ```
+
+## Run 4 — 라이브 배포 후 도달성 (2026-09-10 13:47 KST, append)
+
+```text
+Environment: Windows-browser (라이브 서비스)
+Result: PASS
+Build: 서버 release=4b2dd68c · asset_stamp=485a9a2696e0 (두 replica 일치) ·
+  `bin/deploy-web.sh --web-only` soak PASS · Chrome/152.0.7977.83 전용 프로파일
+Scenario / Evidence (총 6건 PASS 6 / FAIL 0):
+  L1  `https://localhost/` → `/install` 로 이동
+  L2  안내 화면이 **라이브 릴리스 값**을 렌더 — `1.4.0 · 24.7MB · Windows 10 · 11 · 2026-09-10 게시`
+  L3  안내 화면은 게이트를 싣지 않는다(자기 자신으로 되보내는 왕복 없음)
+  L4  `?client_port=&client_nonce=` 가 붙은 라이브 `/` → 통과
+  L5  그 상태의 **새로고침** → 통과 (배포 자동 반영 `ui-refresh.js` 가 타는 경로)
+  L6  같은 창의 `/admin` → 통과
+서버 표면: `/healthz` git_commit=4b2dd68c · `/install` 200 text/html ·
+  `/api/ai/client/entry` 가 실 매니페스트(1.4.0 · sha256 41b53275…) 반환
+```
+
+## Run 5 — 실행 중인 사용자 DQA 앱 (수동 관측)
+
+```text
+Environment: DQA-client
+Result: PASS (관측 범위 한정 — 아래 «확인하지 않은 것» 참조)
+Build: 서버 4b2dd68c 배포 직후 · `DQAConnect.exe` PID 12344 (사용자 실행 세션, 미종료)
+Scenario: 배포로 새 자산이 나간 뒤 **실행 중인 앱이 설치 안내로 튕기지 않는가**
+Evidence: 창 캡처 2회(배포 직후·수 분 뒤) — 두 번 모두 사이드바·대화·작성창이 있는
+  **정상 대화 화면**. 설치 안내 화면 아님.
+  `artifacts/feature-0003-client-entry-gate/dqa-app-after-deploy{,-2}.png`
+방법: `PrintWindow` 로 **수동 관측만** 했다 — 앱을 종료·조작·재설치하지 않았고
+  입력을 넣지 않았다(§16.6 「기존 사용자 앱·연결을 검증 편의로 종료하지 않는다」).
+
+확인하지 않은 것 (정직 표기):
+  - **이 앱이 이미 새 빌드로 재적재됐는지는 미확인.** 자동 반영은 «안전한 시점»에
+    적용되므로 아직 옛 자산일 수 있다. web/caddy 컨테이너에 접근 로그가 없어
+    (`docker compose logs` 0건) 자산 요청으로 가릴 수도 없었다.
+  - 그 재적재 경로 자체는 Run 4 의 **L5** 가 같은 Chromium 엔진 + 라이브 배포본으로
+    실측했다. 즉 「앱이 지금 정상」 + 「재적재 경로가 통과」 두 사실을 각각 얻었고,
+    「이 앱이 재적재를 거쳐 정상」이라는 합산 관측은 아니다.
+  - WebView2 고유 축(창 생명주기·로컬 브리지·트레이)은 이번 변경 범위가 아니라 미확인.
+```

@@ -8,6 +8,11 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260910T134800-client-entry-gate-deploy [SKIPPED:non-policy-doc] — 배포 결과 원장 반영
+
+§18.8 dispatch 표 첫 행(비정책 doc-only). 코드·정책 문서 변경 0 — 직전 cycle 의 Run·TASK·REPORT
+에 배포 도달성과 실행 중인 앱 관측을 반영한 기록 전용 변경이다. 판정 근거는 Run 4·5 본문에 있다.
+
 ## REV-20260910T120000-client-entry-gate [CODEX:client-entry-gate] — 일반 브라우저는 설치 안내로 (Major §12.3)
 
 - **Trigger**: `UI/page/layout` + `API/endpoint` keyword matched (§18.8 dispatch 표 3·4행 —
