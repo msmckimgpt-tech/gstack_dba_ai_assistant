@@ -14,7 +14,11 @@ DQA 1.5.0에 설치된 ChatGPT 데스크톱의 사용자 폴더 Codex 발견·�
 
 native 660개 검증(전체 실행 후 DOM 기대 개수 수정 재검증 포함), runner 37 PASS, 독립 3분야 리뷰 P1/P2 0. 실제 Windows 데스크톱 CLI 로그인/응답, 실제 1.5.0 동결 DQA의 제어된 연결·재실행 2/2 PASS. [검증 Run](test-runs.d/20260910-desktop-codex.md).
 
-배포 전 기록: 1.5.0 Setup/Update ZIP 빌드 완료. 공개·서버 배포·현재 설치된 사용자 DQA 업데이트와 실제 대화 AC4는 진행 중이다. deploy_scope included, 사용자가 구현·구성을 승인한 범위다. 정책 SHA-256 `21286d42d52a987af6bed233fb5c050b429ddfa77d33b4979fea3acb4a17fdef`.
+완료: [PR #1679](https://github.com/msmckimgpt-tech/gstack_dba_ai_assistant/pull/1679), 병합·배포 `931a543e`, 공개 1.5.0 Setup/Update ZIP. web 두 replica ready·90초 soak 및 서빙 소스·설치 runner SHA 일치 PASS. GitHub check run은 없으므로 원격 CI와 구분한다.
+
+현재 사용자의 DQA를 앱 내부 ZIP으로 1.4.0→1.5.0 갱신하고, 정상 재실행 후 데스크톱 Codex를 선택했다. 새 대화의 GPT-6-Astra/보통 요청이 codex/gpt-6-astra/medium으로 실행·제출됐고 실제 DQA 화면에 **DQA_DESKTOP_CODEX_OK**가 표시됐다. AC1~AC4 PASS, 데스크톱 연결 설정 유지. [출하·설치본 Run](test-runs.d/20260910-desktop-codex-release.md).
+
+deploy_scope included, 사용자가 구현·구성을 승인한 범위다. 완료 시 적용 worktree/main 정책 SHA-256 `21286d42d52a987af6bed233fb5c050b429ddfa77d33b4979fea3acb4a17fdef` 일치. 제품 코드 추가 변경 없이 설치본 수용 기록을 후속 커밋으로 남긴다.
 
 ## TASK-20260910-inapp-update
 
