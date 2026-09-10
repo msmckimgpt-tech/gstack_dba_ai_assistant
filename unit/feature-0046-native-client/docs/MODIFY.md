@@ -1085,3 +1085,8 @@ edit_policy: append-only
 - Related TASK: TASK-20260910-inapp-update
 - Why: 구현 검증과 실제 출하 완료를 구분해 후속 세션이 채널·설치본 검증을 재추정하지 않게 한다.
 - Change: PR1670 병합·1.4.0 공개·web-only 배포·실서버 다운로드 지문과 1.3.1 최초 전환·제거 결과를 REPORT/TASK/출하 Run에 정합했다. 제품 코드·바이너리 변경 없음.
+
+## CHG-20260910T115500-inapp-update-integration
+- Related TASK: TASK-20260910-inapp-update
+- 최신 main PR1671의 아이콘 출하 증적과 이번1.4.0 출하 증적을 모두 보존했다. TASK/MODIFY/REVIEW 말미 충돌3곳을 병존으로 해결했다. origin/main 대비 native/web src diff0, 현재 공개1.4.0 유지.
+- merge commit84449a26의 combined-diff 후크가 기존 문서 delta를 인식하지 못한 결과는 이 일반 문서 커밋에서 통합 확인·완료 게이트를 다시 기록한다. 제품 변경·재빌드·재배포는 없다.

@@ -54,6 +54,8 @@ Minor: 기존 per-user 슬롯/신뢰 서버/CA/동의 경계 유지. 현재 요�
 
 제품 PR #1670, 병합·웹 배포 c684d12a, 공개 채널 1.4.0. 실제 Windows ZIP 갱신·구버전 최초 전환·운영 서버 다운로드/해시·제거 PASS. [출하 Run](test-runs.d/20260910-inapp-update-release.md). 전체 feature의 다른 잔여 작업과 이 요청 완료를 구분한다.
 
+- [x] PR1671의 아이콘 출하 기록과 1.4.0 완료 기록 통합 — 양쪽 기록 보존 및 origin/main 대비 native/web 제품 bytes 동일 확인
+
 ## TASK-20260910-transparent-icon-release
 
 사용자 요청: 전진한 버전을 반영하여 투명 아이콘을 배포까지 완료한다. 이전 SVG 승인과 마상 브랜드 방향을 유지한다.
