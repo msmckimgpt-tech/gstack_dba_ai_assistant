@@ -40,7 +40,7 @@ Minor: 기존 per-user 슬롯/신뢰 서버/CA/동의 경계 유지. 현재 요�
 - [x] 구현·빌드·패키지 회귀
 - [x] 실제 Windows 내부 갱신·실패·재실행 검증
 - [x] 독립 리뷰·문서 정합
-- [ ] commit/push/PR 병합·채널 게시·서버 배포·다운로드 검증
+- [x] commit/push/PR 병합·채널 게시·서버 배포·다운로드 검증
 
 ## Context
 
@@ -49,6 +49,12 @@ Minor: 기존 per-user 슬롯/신뢰 서버/CA/동의 경계 유지. 현재 요�
 - policy: AGENTS.md SHA256 a28388df8ae641cb3e1a19fd3850543cdc197adbc56bc858807d74ae1694b4f2
 - hot_paths: client updater/installation, scripts build/publish, web routers/client_release.py; 기존 상태는 task-history/20260910-before-inapp-update.md.
 - 참고: Python zipfile 공식 문서의 경로 정화·압축 해제 자원 제한, Microsoft CreateMutexW 공식 문서의 이름 공간·동시 실행 계약.
+
+## 앱 내부 갱신 완료 증거
+
+제품 PR #1670, 병합·웹 배포 c684d12a, 공개 채널 1.4.0. 실제 Windows ZIP 갱신·구버전 최초 전환·운영 서버 다운로드/해시·제거 PASS. [출하 Run](test-runs.d/20260910-inapp-update-release.md). 전체 feature의 다른 잔여 작업과 이 요청 완료를 구분한다.
+
+- [x] PR1671의 아이콘 출하 기록과 1.4.0 완료 기록 통합 — 양쪽 기록 보존 및 origin/main 대비 native/web 제품 bytes 동일 확인
 
 ## TASK-20260910-transparent-icon-release
 
