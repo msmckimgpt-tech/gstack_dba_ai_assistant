@@ -30,6 +30,7 @@ source_of_truth: true
 - 폴더 CRUD 라우트, 대화 배정/이동, 폴더 삭제(대화 보관·승격), 재귀 조회(WITH RECURSIVE + depth cap).
 - 대화 목록 payload 에 요청자 스코프 `folder_id` 추가(순수 additive), 사이드바 재귀 폴더 렌더(app.js:3022 seam) + 드래그/우클릭 이동 + breadcrumb.
 - 드래그 대상 판정 단일화 — `isFolderScopedConversation`(owner || is_member) 하나를 **폴더 파티션과 draggable 게이트가 공유**해, "폴더에 보이는데 끌 수 없다" 류 표시-집행 불일치를 구조로 차단(2026-08-13 folder-dnd-shared-group).
+- 폴더 행 진입점 — 가시 버튼은 «이 폴더에서 새 대화('📝')», 폴더 관리 메뉴는 «헤더 우클릭»(2026-09-10 사용자 요청·결정). 새 대화는 lazy-create 라 목표 폴더를 `state.pendingFolderId` 에 두고 cid 확정 3경로에서 기존 배정 API 로 넣는다.
 - 폴더 프롬프트: `conversation_folders.instructions` → `compose_system_prompt` 주입(요청자 폴더 기준).
 - 폴더 파일: 폴더-소유 첨부를 요청자 폴더 기준으로 ask-time 컨텍스트 주입(첨부 스코프 게이트를 conv→요청자-폴더 확장, 폴더 소유=요청자 안전).
 - 런타임 max-depth 설정(WebRuntimeSettings) + admin UI.
@@ -97,6 +98,8 @@ source_of_truth: true
 - AC-20260723T054724-folder-idor-1: 타 계정 폴더/미접근 대화 배정·조회 시도가 403 으로 차단(§18.8 적대 검증).
 - AC-20260813T181200-folder-dnd-shared-group-1: 다른 계정이 소유한 그룹 대화(내가 멤버)를 사이드바에서 **드래그해 폴더로 이동**할 수 있고, 폴더 안 항목을 root 드롭 존으로 드래그해 뺄 수 있다(`folder.manage.own` 보유 시).
 - AC-20260813T181200-folder-dnd-shared-group-2: 그 이동은 요청자 계정 스코프에만 반영된다 — 소유자·타 멤버의 사이드바 위치·폴더 표시는 불변(라이브 크로스-계정 실측).
+- AC-20260910T064200-folder-newconv-1: 좌측 대화목록의 폴더 행 버튼('📝')을 누르면 **그 폴더를 대상으로 하는 새 대화**가 시작된다 — 옵션 메뉴가 펼쳐지지 않고, '새 대화 (작성 중)' 행이 그 폴더 안에 표시되며, 첫 메시지를 보내면 생성된 대화가 그 폴더 하위에 남는다(`conversation.create` 보유 시. 미보유면 버튼 자체가 없다).
+- AC-20260910T064200-folder-newconv-2: 폴더 관리 메뉴(이름 변경·하위 폴더 추가·최상위로 꺼내기·설정)는 **폴더 헤더 우클릭**으로 진입한다. 우클릭은 새 대화를 시작하지 않고, 폴더 이름을 드래그 선택한 상태의 우클릭은 브라우저 기본 메뉴(복사)를 우선한다.
 
 ## 12. Observability
 - 폴더 CRUD/배정 audit 로그, depth-cap/순환 거부 카운트.

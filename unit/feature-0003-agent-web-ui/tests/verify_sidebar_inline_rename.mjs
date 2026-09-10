@@ -519,7 +519,10 @@ console.log("\n[9b] 우클릭 메뉴 순서 정합 — 폴더·대화가 같은 
 
   const nested = folderMenuLabels({ folder_id: 7, depth: 1, parent_folder_id: 3 });
   const conv = convMenuLabels();
-  ok("폴더 메뉴 순서", JSON.stringify(nested) === JSON.stringify(["이름 변경", "하위 폴더 추가", "최상위로 꺼내기", "설정"]), nested.join(" | "));
+  // folder-newconv(2026-09-10): 폴더 행의 가시 버튼이 '···'(메뉴) → '📝'(새 대화)로 바뀌면서
+  //   메뉴에도 같은 액션을 두었다(hover 가 없는 터치·키보드에는 이 항목이 유일한 경로다).
+  //   자리는 규칙대로 «양 끝 고정, 사이에 고유 액션» 구간 — 아래 두 단언이 그 규칙 자체를 계속 잠근다.
+  ok("폴더 메뉴 순서", JSON.stringify(nested) === JSON.stringify(["이름 변경", "이 폴더에서 새 대화", "하위 폴더 추가", "최상위로 꺼내기", "설정"]), nested.join(" | "));
   ok("대화 메뉴 순서", JSON.stringify(conv) === JSON.stringify(["이름 변경", "공유", "이동", "설정"]), conv.join(" | "));
 
   // 핵심 계약 — 공통 항목이 양쪽에서 같은 자리에 온다(부정합 재발 차단).
