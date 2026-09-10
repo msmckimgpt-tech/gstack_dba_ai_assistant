@@ -275,6 +275,19 @@ def build_launcher(out: Path) -> Path:
     return launcher
 
 
+def build_update_package(app_dir: Path, out: Path) -> Path:
+    """The same complete app tree is used by initial setup and in-app updates."""
+    import zipfile
+    target = out / f"DQAConnect-Update-{_client_version()}.zip"
+    with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for path in sorted(app_dir.rglob("*")):
+            if path.is_symlink():
+                raise ValueError("app payload must not contain links")
+            if path.is_file():
+                archive.write(path, path.relative_to(app_dir).as_posix())
+    return target
+
+
 def main(argv: list[str] | None = None) -> int:
     _make_stdio_lossy()
     ap = argparse.ArgumentParser()
@@ -353,6 +366,9 @@ def main(argv: list[str] | None = None) -> int:
 
     (app_dir / "install-complete.txt").write_text(_client_version(), encoding="utf-8")
 
+    package = build_update_package(app_dir, out)
+    print(f"업데이트 패키지: {package}")
+
     # ── 3. 설치기 컴파일 ───────────────────────────────────────────────────────
     setup = None
     if not args.skip_installer:
@@ -391,7 +407,7 @@ def main(argv: list[str] | None = None) -> int:
         #   새 버전이 있다는 사실조차 모른다 — 그것이 ROADMAP §10.2 가 미해결로 남긴 간극이다.
         print("\n다음 — 서버 호스트에서 릴리스 채널에 올립니다 (feature-0046):")
         print(f"  python3 unit/feature-0046-native-client/src/scripts/publish_release.py \\\n"
-              f"      --setup <이 파일을 서버로 복사한 경로>/{setup.name}")
+              f"      --setup <이 파일을 서버로 복사한 경로>/{setup.name} --package <패키지 경로>/{package.name}")
         print("  (확인만: 같은 스크립트에 --check)")
     shutil.rmtree(work, ignore_errors=True)
     return 0

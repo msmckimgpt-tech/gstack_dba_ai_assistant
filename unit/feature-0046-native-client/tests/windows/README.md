@@ -109,3 +109,9 @@ WebView2 창 아이콘은 `shown` 이벤트 후 검사한다. `about:blank`의 �
 `verify_text_interaction.py <staging> [control]`은 staging의 `src/client`와 `static/css`를 이용해 실제 제품 Shell/WebView2를 실행한다. `control`은 이전 선택/단축키 설정을 재현한다. 답변·Markdown·원문 코드 fixture의 실제 드래그, Ctrl+C/V, Windows Clipboard와 입력창 동일성, 읽기 전용 본문을 확인한다. 사용자 클립보드는 출력하지 않고 종료 시 복원한다. 키 입력은 해당 WebView2의 CDP에만 전달한다.
 
 현재 호스트에서 CDP는 브라우저 기본 검색 UI에 입력을 전달하지 못한다. 따라서 Ctrl+F/F3/Shift+F3/Escape 실측은 NOT-RUN, 전체 판정은 PARTIAL이다. 설정값 True 또는 접근성 트리 변화만으로 검색 PASS를 쓰지 않는다. 검색 UI를 확인하려면 실제 앱 소유 창에 전달된 native 입력과 검색어/일치번호/닫힘 증거가 필요하다. 서비스 인증/API·실제 사용자 대화는 이 fixture 범위가 아니다.
+
+## 설치파일 없이 앱 내부 갱신
+
+`verify_inapp_update.py --first <격리 AppId 최초 설치기> --second <다음 버전 Update ZIP> --root <새 dqa-inapp 경로> --cert <localhost 인증서> --key <키> --spki <지문> [--notes <실제 release-notes-data.js/release-notes.js/profile CSS를 release-notes.css로 복사한 폴더>]`.
+
+최초 설치는 테스트 전용 AppId·프로토콜·메뉴 그룹으로 컴파일해야 한다. 실제 사용자 설치기를 시험 경로에 실행하면 같은 제거 레지스트리를 변경하므로 허용하지 않는다. 갱신 대상은 Setup이 아닌 ZIP이다. 실제 설치본의 로컬 브리지에서 확인/적용하고 자기 확인창의 Yes만 누른다. 현재 app/runner PID·작성 문구·페이지·쿠키 및 다음 실행 버전을 확인한다. 실패 경계는 설치 mutex·잘못된 해시·포인터 공유 잠금이다. 서버 페이지/러너는 대역이며 실제 AI 제공자 질의·사용자 로그인은 이 검증에 포함되지 않는다.

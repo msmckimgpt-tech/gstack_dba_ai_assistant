@@ -1,38 +1,4 @@
-"""배포된 클라이언트가 **다른 머신에서 새 버전을 받아 설치**하는 경로.
-
-## 왜 이 파일이 있는가 (사용자 요청 2026-09-07)
-
-> 프로젝트 서비스의 클라이언트를 배포했을 상황에서 추가적인 클라이언트 개발로 인해
-> 업데이트가 필요할 경우. 다른 머신에서 버전이 올라간 클라이언트를 업데이트 받을 수 있는
-> 구조를 구성해주세요.
-
-그 전까지 이 프로그램에는 **자기 버전이라는 개념 자체가 없었고**(`FUNCTION.md §4` 가
-「자동 업데이트 — 후속」으로 남긴 축), 새 빌드를 깐 머신과 안 깐 머신을 가를 방법도,
-안 깐 머신에 알릴 방법도 없었다. 러너는 이미 그 문제를 풀어 두었으므로
-(`feature-0043/src/agent/selfupdate.py`) **그 규율을 그대로 이식**한다 — 같은 위험을 두 번
-다르게 풀면 한쪽만 고쳐지는 드리프트가 난다.
-
-## 규율 — 이 파일이 지키는 것 (러너 `selfupdate.py` 와 1:1)
-
-1. **서버가 준 URL 을 쓰지 않는다.** 내려받는 곳은 이 파일의 **고정 경로** + TOFU 로 고정된
-   서버뿐이다. 매니페스트가 절대 URL 을 실어 보내도 무시한다 — 응답을 바꿀 수 있는 누구든
-   이 프로그램이 **실행할 설치기**를 지목할 수 있게 되기 때문이다. 이 경로는 러너 자기 갱신과
-   달리 **관리자 없이 파일을 통째로 갈아 끼우는 설치기**를 돌리므로 대가가 더 크다.
-2. **신뢰 앵커는 고정 서버 + 사내 CA 뿐이다.** `pinned_server`(= 실제로 연결에 성공한 곳)와
-   홈의 `rootCA.crt` 가 없으면 **확인 자체를 하지 않는다**. `remembered_base`(사용자가 받아들인
-   딥링크 주소)는 **쓰지 않는다** — 창을 여는 근거와 실행 파일을 받는 근거는 세기가 다르다
-   (`core.startup_base` 의 ⚠ 와 같은 구분).
-3. **받은 것을 검사한 뒤에만 실행한다.** 크기 일치 · sha256 일치 · PE 서명(`MZ`) · 상한 —
-   하나라도 어긋나면 버린다. 지문 대조는 CA·러너 축과 **같은 함수**(`core.fingerprints_match`)를
-   쓴다. 절반만 옮겨 오면 원본이 막던 것이 새 경로로 샌다(`normalize_fingerprint` 실측).
-4. **더 새것일 때만.** 같은 버전을 새것으로 읽으면 매번 자기를 다시 설치한다. 모양이 아닌
-   버전은 **거짓**이다(`version.is_newer`).
-5. **묻고 나서 적용한다** (사용자 결정 2026-09-07). 이 배포본은 서명되지 않았으므로 무음
-   자동 설치는 「알 수 없는 게시자」 실행을 사용자 모르게 하는 일이 된다. 자동 적용은
-   **홈 설정으로만** 켜지고 기본값은 꺼짐이다.
-6. **현재 앱과 러너는 계속 실행한다.** 새 버전은 별도 슬롯에 설치하고 다음 실행부터 적용한다.
-7. **실패가 프로그램을 죽이지 않는다.** 못 받았거나 못 썼으면 있던 것으로 계속 돈다.
-"""
+"""Download a trusted update ZIP and prepare it in-process; preserve current work."""
 from __future__ import annotations
 
 import hashlib
@@ -40,7 +6,6 @@ import json
 import os
 import re
 import ssl
-import subprocess
 import sys
 import tempfile
 import threading
@@ -49,17 +14,17 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import core, version, installation
+from . import core, version, installation, update_package
 
 #: 매니페스트를 묻는 자리. **고정이다** — 서버 응답의 값을 쓰지 않는다(규율 1).
 MANIFEST_PATH = "/api/ai/client/latest"
 
 #: 설치기를 받는 자리의 접두. 뒤에 매니페스트의 `filename` 이 붙되, 그 이름은 아래
-#: `SETUP_NAME_RE` 를 통과해야 한다 — 경로 구분자·`..`·인자로 읽히는 선두 `-` 를 배제한다.
+#: `UPDATE_NAME_RE` 를 통과해야 한다 — 경로 구분자·`..`·인자로 읽히는 선두 `-` 를 배제한다.
 DOWNLOAD_PREFIX = "/client/"
 
 #: 받아들이는 설치기 파일명. **`publish_release.py` 가 만드는 이름과 같은 모양**이다.
-SETUP_NAME_RE = re.compile(r"^DQAConnect-Setup-[0-9]+(\.[0-9]+){0,3}\.exe$")
+UPDATE_NAME_RE = re.compile(r"^DQAConnect-Update-[0-9]+(\.[0-9]+){0,3}\.zip$")
 
 #: 매니페스트·다운로드 상한(초). 업데이트는 급한 일이 아니므로 짧게 끊고 다음 기회를 기다린다.
 MANIFEST_TIMEOUT_SEC = 20.0
@@ -258,8 +223,8 @@ def settle_pending_install(home: Path,
         log(home, f"apply ok → now v{current}")
         return None
     log(home, f"apply FAILED → still v{current} (wanted {target})")
-    return (f"업데이트({target}) 설치가 완료되지 않았습니다 — 지금은 {current} 로 실행 중입니다.\n\n"
-            "설치 프로그램이 중단되었거나 백신·권한에 막혔을 수 있습니다. "
+    return (f"업데이트({target}) 준비가 완료되지 않았습니다 — 지금은 {current} 로 실행 중입니다.\n\n"
+            "다운로드나 파일 적용이 중단되었을 수 있습니다. "
             "다시 시도하려면 알림 영역 아이콘을 오른쪽 클릭 → [업데이트 확인] 을 누르세요.")
 
 
@@ -301,10 +266,15 @@ def ca_path(home: Path) -> str:
     return str(p) if p.is_file() else ""
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, message, headers, newurl):
+        raise OSError("update redirects are not allowed")
+
+
 def _open(url: str, ca: str, timeout: float):
     ctx = ssl.create_default_context(cafile=ca)
-    return urllib.request.urlopen(  # noqa: S310 — https 강제는 호출부가 이미 했다
-        urllib.request.Request(url, method="GET"), timeout=timeout, context=ctx)
+    opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx), _NoRedirect())
+    return opener.open(urllib.request.Request(url, method="GET"), timeout=timeout)
 
 
 # ── 확인 ─────────────────────────────────────────────────────────────────────────
@@ -352,21 +322,23 @@ def parse_manifest(raw: bytes, current: str = version.CLIENT_VERSION) -> Update 
     if not version.is_newer(ver, current):
         return None                       # 규율 4 — 같거나 낡으면 아무것도 하지 않는다
 
-    name = str(doc.get("filename") or "").strip()
-    if not SETUP_NAME_RE.match(name):
+    package = doc.get("update")
+    if not isinstance(package, dict):
+        return None
+    name = str(package.get("filename") or "").strip()
+    if not UPDATE_NAME_RE.match(name):
         return None                       # 규율 1 — 이름이 곧 경로다
     # 파일명이 버전을 말하고 매니페스트도 버전을 말한다. **두 값이 어긋나면 거절한다** —
     # 어느 쪽을 믿을지 고르는 순간 나머지 하나는 검증이 아니라 장식이 된다.
-    if name != f"DQAConnect-Setup-{ver}.exe":
+    if name != f"DQAConnect-Update-{ver}.zip":
         return None
 
-    digest = core.normalize_fingerprint(str(doc.get("sha256") or ""))
+    digest = core.normalize_fingerprint(str(package.get("sha256") or ""))
     if not re.fullmatch(r"[0-9a-f]{64}", digest):
         return None                       # 지문이 아닌 것은 지문으로 받지 않는다
 
-    try:
-        size = int(doc.get("size"))
-    except (TypeError, ValueError):
+    size = package.get("size")
+    if type(size) is not int:
         return None
     if not (MIN_SETUP_BYTES <= size <= MAX_SETUP_BYTES):
         return None
@@ -451,7 +423,7 @@ def download(home: Path, update: Update, dest_dir: Path | None = None) -> Path |
     base, ca = update_base(home), ca_path(home)
     if not base or not ca:
         return None
-    if not SETUP_NAME_RE.fullmatch(update.filename):
+    if not UPDATE_NAME_RE.fullmatch(update.filename):
         # ⚠ `match` 가 아니라 `fullmatch` 다. Python 의 `$` 는 **말미 개행 앞에서도** 매치해
         #   `"…exe\n"` 이 통과한다 — 현재는 뒤 단계가 막지만, 무결성 검사가 «우연히 도달
         #   불가» 에 기대는 것은 옳지 않다(`core.fingerprints_match` 가 세운 기준).
@@ -504,7 +476,7 @@ def download(home: Path, update: Update, dest_dir: Path | None = None) -> Path |
     #   그 inode 를 다른 흐름이 계속 쓰는 동안 우리가 그 경로를 실행 대상으로 돌려주게
     #   된다 — 검사한 바이트와 실행되는 바이트가 갈리는 그 형태다(적대 리뷰 P1-A).
     #   `mkstemp` 가 잡아 둔 이름을 그대로 쓰고, 확장자만 실행 가능한 형태로 바꾼다.
-    final = tmp.with_name(tmp.name[:-len(".part")] + ".exe")
+    final = tmp.with_name(tmp.name[:-len(".part")] + ".zip")
     try:
         os.replace(tmp, final)
     except Exception:  # noqa: BLE001
@@ -526,7 +498,7 @@ def _sweep_old_downloads(out_dir: Path, keep: Path, max_age_sec: float = 3600.0)
         for child in out_dir.iterdir():
             if child == keep or not child.is_file():
                 continue
-            if not (child.name.endswith(".part") or child.name.endswith(".exe")):
+            if not (child.name.endswith(".part") or child.name.endswith((".exe", ".zip"))):
                 continue
             try:
                 if now - child.stat().st_mtime > max_age_sec:
@@ -548,7 +520,7 @@ def matches(size: int, digest: str, magic: bytes, update: Update) -> bool:
         return False
     if not (MIN_SETUP_BYTES <= size <= MAX_SETUP_BYTES):
         return False
-    if magic[:2] != b"MZ":
+    if magic[:2] != b"PK":
         return False                      # Windows 실행 파일이 아니다(HTML 오류 본문 등)
     return core.fingerprints_match(digest, update.sha256)
 
@@ -560,11 +532,6 @@ def verify(payload: bytes, update: Update) -> bool:
 
 
 # ── 적용 ─────────────────────────────────────────────────────────────────────────
-
-# Keep the current app and all its children alive, including during unattended updates.
-SILENT_ARGS = ("/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
-               "/NOCLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS")
-
 
 def confirm_text(update: Update, connected: bool, home: Path | None = None) -> str:
     """Explain the installation source and when the new version takes effect."""
@@ -583,26 +550,13 @@ def confirm_text(update: Update, connected: bool, home: Path | None = None) -> s
             lines.append(f"  업데이트 서버:  {bundled}")
             lines.append("직접 요청한 것이 아니라면 [아니요] 를 누르세요.")
     lines.append("")
+    lines.append("별도 설치 프로그램 없이 DQA 안에서 업데이트를 준비합니다.")
     lines.append("현재 앱과 AI 연결은 유지됩니다.")
     lines.append("새 버전은 DQA를 종료한 뒤 다시 실행할 때 적용됩니다.")
-    lines.append("창 닫기는 트레이로 숨기기이며, 업데이트 적용을 위한 종료가 아닙니다.")
+    lines.append("알림 영역 아이콘이 있는 동안 창 닫기는 숨기기입니다. 적용하려면 [종료]를 선택하세요.")
     return "\n".join(lines)
 
 
-def apply(installer: Path) -> bool:
-    """Wait for the installer on the caller's worker thread; never stop the app."""
-    exe = Path(installer)
-    if not exe.is_file():
-        return False
-    kwargs: dict = {"close_fds": True}
-    if os.name == "nt":
-        kwargs["creationflags"] = (getattr(subprocess, "DETACHED_PROCESS", 0)
-                                   | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
-    try:
-        process = subprocess.Popen([str(exe), *SILENT_ARGS], **kwargs)  # noqa: S603
-        return process.wait() == 0
-    except Exception:  # noqa: BLE001 — 못 띄웠으면 있던 버전으로 계속 돈다
-        return False
 def verify_file(path: Path, update: Update) -> bool:
     """**디스크의 그 파일**이 매니페스트가 말한 그것인가.
 
@@ -672,7 +626,7 @@ def run_flow(home: Path, *, target: Update, confirm=None, say=None,
         # ⚠ **실행할 바로 그 파일을 다시 센다** (§3-b · G14). 스트림 판정만으로는 실행 대상이
         #   검증되지 않는다 — 그 둘이 갈리는 것이 P1-A 였다.
         if not verify_file(path, target):
-            detail = "받은 파일이 실행 직전 검사에서 어긋났습니다 — 설치하지 않습니다."
+            detail = "받은 파일이 실행 직전 검사에서 어긋났습니다 — 적용하지 않습니다."
             say(detail)
             log(home, f"pre-apply verify FAILED → {target.version}")
             path.unlink(missing_ok=True)
@@ -687,28 +641,31 @@ def run_flow(home: Path, *, target: Update, confirm=None, say=None,
         # 띄우기 **전에** 시도를 남긴다 — 이 표식이 없으면 설치 실패를 판정할 근거가 사라진다.
         mark_pending_install(home, target.version)
         _write_state(home, install_status="installing", install_error="")
-        say("새 버전을 설치하는 중입니다. 현재 작업을 계속할 수 있습니다.")
-        if not apply(path):
-            detail = "업데이트 설치를 완료하지 못했습니다 — 지금 버전과 연결을 유지합니다."
+        say("새 버전을 준비하는 중입니다. 현재 작업을 계속할 수 있습니다.")
+        try:
+            applied_version = update_package.apply_package(path, target.version)
+        except Exception as exc:  # The old slot remains active on every failure.
+            log(home, f"package apply failed: {type(exc).__name__}")
+            detail = "업데이트를 완료하지 못했습니다 — 지금 버전과 연결을 유지합니다."
             say(detail)
             log(home, f"install FAILED → {target.version}")
             _write_state(home, install_status="failed", install_error=detail)
             clear_pending_install(home)
             return {"ok": False, "error": "install_failed", "detail": detail}
 
-        if installation.active_version() != target.version:
-            detail = "설치 결과를 확인하지 못했습니다. 현재 버전과 연결을 유지합니다."
+        if installation.active_version() != applied_version:
+            detail = "업데이트 결과를 확인하지 못했습니다. 현재 버전과 연결을 유지합니다."
             clear_pending_install(home)
             _write_state(home, install_status="failed", install_error=detail)
             log(home, f"activation FAILED → {target.version}")
             return {"ok": False, "error": "activation_failed", "detail": detail}
         clear_pending_install(home)
         _write_state(home, install_status="prepared", install_error="")
-        detail = prepared_text(target.version)
+        detail = prepared_text(applied_version)
         say(detail)
         log(home, f"prepared → {target.version}; running → {version.CLIENT_VERSION}")
         return {"ok": True, "restarting": False, "prepared": True,
-                "version": target.version, "detail": detail}
+                "version": applied_version, "detail": detail}
     finally:
         _FLOW_LOCK.release()
 
@@ -724,8 +681,8 @@ def running_frozen() -> bool:
 
 
 def prepared_text(target: str) -> str:
-    return (f"{target} 설치가 완료되었습니다. 현재 작업은 계속할 수 있습니다. "
-            "DQA를 종료한 뒤 다시 실행하면 새 버전이 적용됩니다.")
+    return (f"{target} 업데이트 준비가 완료되었습니다. 현재 작업은 계속할 수 있습니다. "
+            "알림 영역의 DQA 아이콘을 오른쪽 클릭해 [종료]한 뒤 다시 실행하면 적용됩니다.")
 
 
 def installation_status(home: Path) -> dict:
