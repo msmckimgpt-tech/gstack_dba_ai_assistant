@@ -1118,3 +1118,83 @@ ADR-0026 의 "AWS 자격증명은 bedrock-gateway 만 인지" 정책을 docker-c
 - 결정: `docs/PROJECT.md`의 `primary_ui_surface: dqa-client`, AGENTS §15.4.1·§16.6, PB-0009를 정본으로 한다. PB-0008은 일반 브라우저 호환 보조 경로로 유지한다.
 - 적용: 새 Run은 DQA-client와 명시 Result/증거/미검증 범위를 기록한다. 기존 Windows-browser 이력은 삭제하지 않고 실제 대상에 따라 해석한다. 브라우저/Node/CLI PASS를 앱 전체 PASS로 합산하지 않는다.
 - 근거: 이번 사용 경로 정정과 feature-0046 `window.py`의 내장 WebView2 구현. 상세 검수·검증 결과는 [위탁 병목 개선](improvements/delegation-friction-20260908/EVIDENCE.md)과 해당 REPORT 참조.
+
+
+## ADR-20260910T130000-private-product-initial-owner — 비공개 Product 초기 소유자 = 생성자
+
+- Status: accepted — 2026-09-10 사용자 AskUserQuestion 「3건 모두 승인」 (Critical §12.3,
+  DQA 실무 검증 개선 요구서 DQA-03).
+- Context: 비공개 제품(`WebProducts.DefaultRoleAccess = 0`)은 동적 권한 코드
+  `product.access.<key>` 를 만들되 **어느 역할·계정에도 부여하지 않고 commit** 됐다
+  (`admin_products.py::admin_create_product`, 근거 `docs/improvements/dqa-field-audit-20260910/EVIDENCE.md`
+  E-03b). 그리고 부여 경로 2곳(`_enforce_override_self_scope` ·
+  `_enforce_role_permission_self_scope`)은 「행위자가 보유한 코드만 부여」라 **아무도 보유하지
+  않은 코드는 모든 부여 시도가 403** 이다(E-03c). 결과: 생성 즉시 사용도 복구도 불가능한 제품이
+  남았다(라이브 실측 Product 990002). 접근 모델에 소유자 컬럼·멤버십 테이블이 없고 접근은 RBAC
+  동적 권한 코드 단일 모델이라(`web_context._product_permission_code`), 「소유자」를 표현할 자리는
+  권한 부여 행 하나뿐이다.
+- Decision: **비공개 제품의 초기 접근 주체는 그 제품을 만든 계정 1건**이며, 그 부여는
+  **생성 트랜잭션 안에서** 일어난다. 제품 행 · 동적 권한 행 · 초기 grant 행 · 감사행이
+  `conn.commit()` 1회로 확정되고, 어느 단계의 실패(영향 행 0 포함)도 전체 rollback 이다.
+  - 부여 형태는 `WebAccountPermissionOverrides(AccountId=<생성자>, PermissionId=<신규 코드>,
+    OverrideValue='allow')` **1행**이다. 전용 헬퍼
+    `_grant_product_access_to_account()` 는 INSERT 1행만 하며
+    `admin_accounts.py::_set_account_overrides` 의 «DELETE … WHERE AccountId 후 재삽입»(전체
+    교체) 로직을 상속하지 않는다 — 상속하면 생성자의 기존 override 가 전멸한다.
+  - 공개 제품(`DefaultRoleAccess = 1`)에는 계정 override 를 만들지 않는다. 역할 backfill 이
+    이미 생성자를 덮으며, 불필요한 override 는 이후 **역할 단위 회수를 무력화**한다(최소 권한).
+- 기각안: **관리자 역할·계정명 기반 비공개 제품 전체 접근**. 근거 — 요구서 DQA-03 이 명시적으로
+  배제하고, `docs/SECURITY.md` §28.6 이 기술하는 권한상승 가드의 «행위자 보유 범위» 계약을
+  깨뜨린다. 자기 잠금의 탈출구를 「관리자면 통과」로 만드는 것은 가드 자체의 폐기다.
+- 유지: `_enforce_override_self_scope` · `_enforce_role_permission_self_scope` **무변경**.
+  생성 시점 grant 가 가드를 완화할 필요를 없앤다. 두 가드의 무변경은 구조 테스트
+  (`tests/test_product_create_atomic.py::test_a7b_self_scope_guards_unchanged`)가 잠근다 —
+  관리자 우회로 보이는 표현(`== "admin"` · `is_admin` · `bypass` 등)이 들어오면 적색이 된다.
+- 기존 고립 데이터: 코드 수정은 **앞으로 생기는** 고립만 막는다. 이미 고립된 제품은
+  `unit/feature-0003-agent-web-ui/scripts/product_access_repair.py` +
+  `bin/product-access-repair.sh` 로 진단(읽기 전용 기본)하고, **운영자가 지정한 계정 1개**에만
+  복구한다 — 스크립트가 대상 계정을 추론·자동 선택하지 않으며(인가 데이터 부여), 명시 `deny`
+  override 는 뒤집지 않는다. 절차 정본
+  `unit/feature-0003-agent-web-ui/docs/RUNBOOK-product-access-repair.md`.
+- Consequences:
+  - 생성자는 자기가 만든 비공개 제품을 즉시 쓸 수 있다(작업 화면 제품 목록 포함).
+  - 「생성자」는 **감사 가능한 사실**로 남는다 — 응답 `initial_access_account_id` +
+    생성 감사행의 actor. 진단 스크립트가 그 actor 를 복구 후보로 «출력» 하지만 기본값으로
+    쓰지 않는다.
+  - 생성자 계정이 비활성·삭제되면 그 제품은 다시 고립될 수 있다. 이 경로의 정상 대응은 복구
+    스크립트이며, 계정 삭제 시 자동 이관은 **이번 결정 범위 밖**이다(후속 후보).
+  - **개인 override 가 누적된다 (적대 검증 지적, 수용).** 공개 제품에 계정 override 를 만들지
+    않는 근거로 든 「불필요한 override 는 역할 단위 회수를 무력화한다」는 논리는 비공개 제품의
+    생성자 grant 에도 그대로 적용된다 — 그 행은 역할 회수로 사라지지 않고 만료도 없다. 제품을
+    여럿 만든 관리자에게는 개인 override 가 쌓이며, 이 결정은 그 정리 훅(오프보딩 시 «생성만
+    하고 쓰지 않는 product.access override N건» 표면화)을 **포함하지 않는다**. 대안(생성자
+    grant 없음)은 고립을 되살리므로 채택하지 않았고, 누적은 감수하는 비용으로 기록한다.
+    후속 후보: 계정 상세에 «내가 만들었지만 쓰지 않는 제품 접근» 목록 + 일괄 회수.
+  - **대리 생성(create-on-behalf-of) 경로가 없다 (적대 검증 지적, 수용).** 플랫폼 관리자가
+    업무팀을 위해 비공개 제품을 만들면 grant 는 **관리자 자신**에게 간다. 의도한 최종 상태는
+    ① 콘솔에서 실 소유자에게 부여 → ② 관리자 자신의 override 회수, 두 단계 수동 작업이며
+    이 결정은 ②를 상기시키지 않는다. 절차를 RUNBOOK §4 에 명시해 «잊히는 절반»을 줄인다.
+  - **복구 후보 정보는 감사 보존기간에 종속된다.** `find_create_actor` 는 `WebAuditEvents` 의
+    `admin.product.create` 행에 의존하므로, ITEM-03 이전에 만들어진 오래된 제품이나 보존기간이
+    지난 뒤에는 후보가 「감사 기록 없음」으로 비게 된다. 그 경우 grantee 판단은 제품 외부 맥락
+    (업무 담당)에 의존하며, 스크립트는 추측하지 않는다.
+  - **감사행을 생성 tx 로 옮긴 대가 (적대 검증 지적, 수용).** `record_audit_event` 는 감사행
+    INSERT 직후 별도 커넥션에서 해시 체인을 동기 봉인하며 그 안에서 `GET_LOCK(...,5)` 을 잡는다.
+    감사를 생성 트랜잭션 안으로 옮긴 결과, 제품 생성도 update·delete 와 같은 그 직렬화 지점을
+    **자기 트랜잭션을 열어 둔 채** 통과한다 — `is_default=true` 면 그 시점에 다른 전 제품 행의
+    쓰기 락까지 함께 물고 있다. 원자성(E-03d)을 얻는 대가로 락 보유 구간이 최대 5초 늘 수 있고,
+    이는 update·delete 가 이미 갖고 있던 노출을 create 가 물려받은 것이다. 현재 관리 콘솔
+    부하에서는 수용하며, 필요해지면 동기 봉인을 비동기 catch-up 으로 미루는 것이 후속 수단이다.
+  - **복구 감사행의 actor 는 사람 계정이다.** `--operator <계정Id>` 를 필수로 요구해
+    `WebAuditEvents.ActorAccountId` 를 채운다 — `actor_type='system'` 만 남기면 컨테이너
+    exec 권한자 누구든 흔적 없이 인가 데이터를 부여할 수 있다(적대 검증 지적 반영).
+  - 관리 콘솔의 접근 범위 선택은 인가 경계 입력이므로, 인식하지 못한 답을 임의 해석하지 않고
+    다시 묻는다(조용한 오독 금지).
+- 파싱 경계: 「공개/비공개」를 가르는 `default_role_access` 는 **JSON boolean 만** 받는다
+  (부재 → 공개, 그 외 타입 → 400). 느슨한 `bool()` 은 문자열 `"false"` 를 참으로 읽어 비공개
+  의도를 전 역할 공개로 뒤집는데, 이 결정이 그 한 값의 위험도를 올렸으므로 파싱도 함께 좁혔다.
+  create·PATCH 양쪽에 동일 적용(한쪽만 좁히면 그 비대칭이 우회로가 된다).
+- Evidence: `unit/feature-0003-agent-web-ui/tests/test_product_create_atomic.py`(76 케이스 —
+  AC-03-1~5 · 결손 주입 3종으로 방어 성립 실측) ·
+  `unit/feature-0003-agent-web-ui/docs/test-runs.d/TASK-20260910-item03.md` ·
+  적대 검증 `unit/feature-0003-agent-web-ui/docs/REVIEW.md` REV-20260910T170000-item03.

@@ -3824,3 +3824,25 @@ Evidence: [실행 원장](test-runs.d/20260908T123400-connect-discovery.md), fea
 - **Environment: Windows-browser (PB-0008)** — 미수행. 이 변경은 렌더 로직·DOM·CSS 무접촉의 **정적 데이터 항목 3개 append + 문장 2건 정정**이고 동일 렌더 경로를 jsdom 하네스 34건이 전건 단정하므로 실 브라우저 시각검증의 추가 판별력이 없다. 아울러 이 창에서도 UI 검증 정본은 PB-0009(실제 DQA 앱)이며(ADR-20260908T024500), 배포 후 라이브 노출 확인은 wrapper 소관이다.
 - reconcile-first 실측(2026-09-10T01:0x+09:00, run 시작 시점): 서빙 `https://<host>/static/release-notes-data.js` 가 `origin/main` blob 과 **바이트 동일**(506,570 bytes) · `healthz` 200 → **파리티 갭 0**.
 - **Pass/Fail: PASS**.
+
+## TASK-20260910-item03-product-atomic-create — 비공개 Product 원자 생성 · 길이 검증 · 고립 복구
+
+- **정본 Run**: [`docs/test-runs.d/TASK-20260910-item03.md`](test-runs.d/TASK-20260910-item03.md)
+  (환경별 Result·증거·미검증 범위·경계 명시). 아래는 요지만 적는다.
+- `python3 -m pytest unit/feature-0003-agent-web-ui/tests/test_product_create_atomic.py`
+  → **76 passed / 0 failed** (AC-03-1~5 · 결손 주입 3종 KILL).
+- 관련 회귀 `test_product_list_rbac` · `test_model_access_rbac` ·
+  `test_product_multi_datasource_api` · `test_product_delete_block_conv` · `test_web_perf_p1`
+  → **66 passed / 0 failed**.
+- `node tests/verify_product_create_flow.mjs` → **50 passed / 0 failed** (jsdom@22, Node18)
+  — 카운터 갱신·경계 양측·생성 흐름 POST body·초과 입력 보존 재질문·취소·서버 사유 노출.
+- **라이브 dry-run(읽기 전용)**: `bash bin/product-access-repair.sh` 가 배포된 web replica 에서
+  고립 제품 `#990002 DK_KR_S3_20260903`(grantees 0, 생성자 후보 account=1)을 실제로 지목.
+  `--apply` 는 계정 미지정 시 rc=1 로 거부. **쓰기 0행** 확인(감사 0 · override 0).
+- feature-0003 전체 회귀(호스트) **2219 passed / 7 failed** — 7건은 컨테이너 레이아웃 전제의
+  선재 실패(`test_share_redaction_invariant`)이며 컨테이너에서 **100 passed, rc=0** 으로 통과
+  확인(귀책 대조 완료).
+- ruff `All checks passed!` (내가 추가·수정한 py 6개). 저장소 잔여 `F821` 1건은 base 에서도 동일.
+- **Environment: DQA-client — NOT-RUN.** 이 변경은 미배포이고 실 클라이언트는 사용자 Windows
+  머신에 있다. 사유·대체 검증·후속 조건은 위 Run 에 기록했으며 **PASS 로 승격하지 않는다**(§15.4.1).
+- **Pass/Fail: PASS (단, AC-03-6 실 클라이언트 축은 NOT-RUN — 배포 후 수행)**.

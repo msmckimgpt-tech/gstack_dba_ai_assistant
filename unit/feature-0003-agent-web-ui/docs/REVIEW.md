@@ -8750,3 +8750,15 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - Verdict: PASS
 - Human Approval Needed: no
 - 제품 코드 추가 변경 없음. 6bdcc7ba는 native/web1.4.0 제품과 FUNCTION 동일성에 대한 독립 QA 확인 P1/P2 0 및 승인한 운영 복구 코드를 보존한다. 실제 Windows/공인 채널 증적은 기존 Run을 참조한다.
+
+## REV-20260910T170000-item03 [SUBAGENT:security+backend+qa+ux] — CONCERN
+- Related TASK: feature-0003-agent-web-ui (TASK-20260910-item03-product-atomic-create)
+- Trigger: `auth/인가` keyword matched (인가 데이터 생성 경로 — security 필수) · `schema/스키마` + `API/엔드포인트` (backend·qa) · `form/폼·화면` (ux). §12.3 Critical.
+- Timestamp: 2026-09-10T17:00:00+09:00
+- Verdict: CONCERN
+- Artifact: unit/feature-0003-agent-web-ui/docs/reviews/20260910T170000-item03-security-backend-qa-ux.md
+- Rounds: 1(지적: security CONCERN / backend BLOCK / qa BLOCK / ux BLOCK — P1 4건) → 2(수정+확인: P1 3건 해소, 1건 승인 밖 BLOCKED 상신, 마지막 라운드 P1 0)
+- Critical issue (CONCERN): 제품 **생성**이 `CONVENTIONS.md` §10.7(pending → 「모두 적용」)을 우회한 채 인가 결정(공개/비공개)을 즉시 확정한다 — 해소 두 경로 모두 승인 범위 밖이라 `REPORT.md` 에 `BLOCKED: awaiting-human-approval` 로 상신했다(`roles.js::startNewRole` staged-creation 선례 포함).
+- 실측으로 확인된 P1 3건 수정: ① `WebPermissions.Label` 오버플로(정당한 121~128자 이름이 실 MySQL 에서 1406 + 틀린 400) → 파생 문자열 clip + 분류기 정확-토큰 판정 ② stub 이 「트랜잭션 존재」를 못 봐 `autocommit=False` 제거가 전건 통과했다(원자성 주장 미검증) → autocommit 감시 stub, 같은 뮤턴트 18건 FAIL 로 KILL ③ 취소가 작성분 폐기 → 초안 보존 + 되돌릴 수 없는 선택 앞 요약 confirm.
+- CSS 특이도 결함은 **실 Chromium 실측**으로 확인·수정(pre-fix `rgb(90,88,82)`/600 → post-fix `rgb(128,125,114)`/400) — jsdom 은 이 클래스를 판정하지 못한다.
+- Human Approval Needed: yes (§10.7 정합화 방향 — REPORT.md BLOCKED 절)

@@ -200,9 +200,28 @@ def test_session_touch_disabled_by_zero(monkeypatch):
 
 
 def test_product_crud_invalidates_catalog_cache():
-    """(소스 잠금) 동적 권한을 바꾸는 product CRUD commit 마다 캐시 무효화 호출."""
+    """(구조 잠금) 동적 권한을 바꾸는 product CRUD **핸들러마다** 캐시 무효화 호출.
+
+    ITEM-03 (2026-09-10): 종전 단언은 파일 전체의 호출 **개수**(`>= 4`)를 셌다. 그 4 는
+    「create 가 제품 tx 와 감사 tx 로 2번 commit 하던」 구조의 산물이었고, ITEM-03 이 감사행을
+    같은 트랜잭션으로 합치자(E-03d) 개수가 3 으로 줄어 단언이 깨졌다 — 동작은 오히려 정합해진
+    변경인데 개수 단언이 적색이 된 것이다. 개수 대신 **어느 핸들러에 들어 있는가**를 본다:
+    호출이 한 핸들러에 몰려 있어도 통과하던 종전 약점까지 함께 닫는다(AGENTS §16.7 G12).
+    """
+    import ast
+
     src = (Path(webapp.__file__).parent / "routers" / "admin_products.py").read_text(encoding="utf-8")
-    assert src.count("app.invalidate_permission_catalog_cache()") >= 4
+    tree = ast.parse(src)
+    handlers = {
+        n.name: n for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    for name in ("admin_create_product", "admin_update_product", "admin_delete_product"):
+        assert name in handlers, f"{name} 핸들러가 없다"
+        body = ast.unparse(handlers[name])
+        assert "app.invalidate_permission_catalog_cache()" in body, (
+            f"{name} 이 동적 권한(product.access.*) 을 바꾸고도 카탈로그 캐시를 무효화하지 않는다"
+        )
 
 
 # ── C. web memory 풀 opt-in ────────────────────────────────────────────────────

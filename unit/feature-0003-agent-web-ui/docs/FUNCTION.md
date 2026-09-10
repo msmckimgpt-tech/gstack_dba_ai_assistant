@@ -872,8 +872,8 @@ Web UI API와 정적 프론트엔드 자산을 관리한다.
 - AC-0038: 다음 mutation/read 경로 8 곳 (G1-G8) 에 product access 가드가 적용된다 — (G1) `PATCH /api/conversations/{cid}/product` pinned 모드, (G2) `POST /api/new_conversation` body `product_id`, (G3) `POST /api/ask` body `product_id` hint, (G4) `POST /api/ask` 기존 conversation 의 `product_id_for_run` 시점, (G5) `POST /api/fork_conversation` source product 상속 (+ `product_mode` 'auto' 보존 fix), (G6) `_save_account_product_pref` defense-in-depth, (G7) `GET /api/auth/me/system-prompt?product_id=<X>`, (G8) `PUT /api/auth/me/system-prompt` body `product_id`. 권한 없으면 HTTP 403 + `이 제품에 접근할 권한이 없습니다.` (또는 G4: `이 대화의 제품 접근 권한이 회수되었습니다. 사이드바에서 auto 모드로 전환하거나 관리자에게 권한 요청 후 다시 시도해 주세요.`).
 - AC-0039: 관리 콘솔 `PERMISSION_GROUP_ORDER` 에 `product` 그룹이 추가되어 (frontend `admin.js` + backend `app.py` 양쪽 동기) 역할/계정 detail 의 권한 grid 에 "제품" 그룹이 자동 노출된다. 그룹 안에는 정적 `product.manage` / `system_prompt.manage.role.any` 와 함께 동적 `product.access.<key>` 코드들이 모두 표시된다.
 - AC-0040: `admin_update_account` (PATCH `/api/admin/accounts/{account_id}`) 의 pre-existing 버그 fix — 기존 `target.get("role")` 은 항상 None 이라 PATCH 마다 RoleId 를 0 으로 덮어쓰던 회귀를 `target.get("role_id")` 로 직접 조회하도록 수정. body 에 `role_id` 가 명시되지 않은 PATCH (예: permission_overrides 만 변경) 가 더 이상 RoleId 를 손상시키지 않는다.
-- AC-0041: `WebProducts.DefaultRoleAccess TINYINT(1) NOT NULL DEFAULT 1` 컬럼이 존재한다 (TASK-0053). product 가 정책 주체 — true 면 product 생성 시 모든 active role 에 자동 grant, false 면 명시 grant 만으로 접근 가능. 기존 product 들은 default 1 으로 backfill 되어 D2-A 호환성 유지.
-- AC-0042: `POST /api/admin/products` body 의 `default_role_access` 가 INSERT 시 `WebProducts.DefaultRoleAccess` 에 저장되고, true 일 때만 transaction 내 role grant backfill SQL 이 실행된다. `PATCH /api/admin/products/{id}` 도 `default_role_access` 수용 (기존 product 정책 변경 가능, 단 변경은 향후 backfill 시점에만 적용 — 기존 grant 는 보존). `_list_products` 응답에 `default_role_access` 필드 노출.
+- AC-0041: `WebProducts.DefaultRoleAccess TINYINT(1) NOT NULL DEFAULT 1` 컬럼이 존재한다 (TASK-0053). product 가 정책 주체 — true 면 product 생성 시 모든 active role 에 자동 grant, false 면 명시 grant 만으로 접근 가능. 기존 product 들은 default 1 으로 backfill 되어 D2-A 호환성 유지. **ITEM-03 개정 (2026-09-10)**: false 여도 「아무도 접근할 수 없는 제품」이 만들어지지는 않는다 — 생성 트랜잭션이 **생성자 계정 1건**에 `WebAccountPermissionOverrides(allow)` 를 넣는다(AC-0634). 즉 false = «역할 자동 grant 없음» 이며 «접근자 0» 이 아니다.
+- AC-0042: `POST /api/admin/products` body 의 `default_role_access` 가 INSERT 시 `WebProducts.DefaultRoleAccess` 에 저장되고, true 일 때만 transaction 내 role grant backfill SQL 이 실행된다. **ITEM-03 개정 (2026-09-10)**: false 일 때는 그 자리에서 생성자 계정 grant 가 대신 실행된다(AC-0634) — 두 분기 중 **정확히 하나**가 항상 돈다(어느 쪽도 돌지 않는 경로는 없다). `PATCH /api/admin/products/{id}` 도 `default_role_access` 수용 (기존 product 정책 변경 가능, 단 변경은 향후 backfill 시점에만 적용 — 기존 grant 는 보존). `_list_products` 응답에 `default_role_access` 필드 노출.
 - AC-0043: 관리 콘솔 Product detail 에 "신규 역할 자동 접근" 토글이 노출되어 운영자가 product 생성/수정 시점에 정책 결정 가능. Role detail 에는 동일 정책의 토글이 노출되지 않는다 (정책 주체는 Product).
 - AC-0044: 관리 콘솔 권한 grid (`renderPermissionGrid`) 가 `groupedPermissions({excludeDynamic: true})` 를 사용해 동적 `product.access.<key>` 권한들을 grid 에서 분리한다. 정적 `product.manage` / `system_prompt.manage.role.any` 만 product 그룹에 남고 dynamic 코드들은 별도 product subcatalog 카드로 이전된다.
 - AC-0045: Role detail 에 product 별 collapsible card list 가 노출된다 — 각 카드의 헤더에 access 토글 (= role.permission_codes 의 `product.access.<key>` 토글), 본문에 role-scope system prompt textarea (`fixedProductId=Number(product.id)`). 마지막에 "전 Product 공통" generic card (fixedProductId=0) 가 추가된다. `account scope prompt` 는 profile drawer 에 위치하므로 Role detail 카드에는 prompt textarea 도 access 토글도 표시되지 않는다.
@@ -5158,3 +5158,77 @@ index/admin/share/ai-connect/oauth-callback/oauth-consent의 favicon은 같은 �
 - AC-TI-1: 정본 SVG와 PNG/ICO는 실제 투명 배경이며 ICO 9개 크기에서 외곽 alpha=0이다.
 - AC-TI-2: Window.Icon 검사와 실제 작업 표시줄 검사를 구분하고 적용되는 앱 식별자·아이콘/재실행 속성·바로가기를 Windows에서 대조한다.
 - AC-TI-3: 이전 1.1.2의 Python 작업 표시줄 아이콘을 재현하고 수정본의 투명 DQA 아이콘을 확인한다. 새 설치기와 웹 favicon이 기존 채널에서 제공된다.
+
+## ITEM-03 — 비공개 Product 원자 생성 · 초기 접근 권한 · 고립 진단/복구 · Description 길이 (DQA-03 · DQA-09, 2026-09-10)
+
+설계 정본 `docs/improvements/dqa-field-audit-20260910/DESIGN.md` `### ITEM-03` · 근거 `EVIDENCE.md`
+E-03a~e · E-09b · 결정 `docs/DECISIONS.md` ADR-20260910T130000-private-product-initial-owner ·
+보안 경계 `docs/SECURITY.md` §28.6. 「비공개」의 정본 의미는 `WebProducts.DefaultRoleAccess = 0`
+(= 역할 자동 grant 없음)이며 «접근자 0» 이 아니다.
+
+- AC-0634: `POST /api/admin/products` 는 `default_role_access=false` 일 때 **생성 트랜잭션 안에서**
+  헬퍼 `_grant_product_access_to_account(conn, account_id, permission_id)` 로 **생성자 계정**에
+  `WebAccountPermissionOverrides(AccountId=<생성자>, PermissionId=<신규 product.access.*>,
+  OverrideValue='allow')` **1행**을 INSERT 한다. 그 헬퍼는 INSERT 1행만 수행하며 기존 override 를
+  읽지도 지우지도 않는다 — `routers/admin_accounts.py::_set_account_overrides` 의
+  «`DELETE … WHERE AccountId` 후 재삽입»(전체 교체) 로직을 상속하지 않는다. 영향 행이 0 이면
+  `RuntimeError` 로 caller 가 전체 트랜잭션을 rollback 한다. 응답에
+  `initial_access_account_id` 가 실린다. `default_role_access=true` 면 계정 override 를 만들지
+  않는다(역할 backfill 이 이미 덮으므로 — 불필요한 override 는 이후 역할 단위 회수를 무력화한다).
+- AC-0635: 제품 생성의 **감사행이 같은 트랜잭션**이다 — `WebProducts` INSERT · `WebPermissions`
+  INSERT · 역할 backfill 또는 생성자 grant · `WebAuditEvents`(`admin.product.create`) 가
+  `conn.commit()` **1회**로 확정된다(종전 2 commit — E-03d). 어느 단계의 예외든, 그리고
+  grant 의 영향 행 0 이든 전체 rollback 이며 제품·권한·감사행 어느 것도 남지 않는다.
+- AC-0636: `_enforce_override_self_scope`(`routers/admin_accounts.py`) 와
+  `_enforce_role_permission_self_scope`(`routers/admin_roles.py`) 는 **무변경**이다. 관리자 계정명·
+  역할 기반 우회를 두지 않는다 — 생성 시점 grant 가 그 필요를 없앤다(SECURITY §28.6 정합).
+  다른 관리자가 자기 미보유 코드를 부여하려 하면 기존 403 문구가 그대로 난다.
+- AC-0637: 제품 텍스트 길이 상한의 정본은 `routers/_bootstrap_schema.py` 의
+  `PRODUCT_NAME_MAX = 128` · `PRODUCT_DESCRIPTION_MAX = 255` 이며 DDL
+  (`WebProducts.Name VARCHAR(128)` · `WebProducts.Description VARCHAR(255)` ·
+  `WebProductDatabases.Description VARCHAR(255)`) 과 같은 값이다. 단위는 **문자 수**
+  (MySQL utf8mb4 `VARCHAR(N)` = 문자 N → 한글 1자 = 1, 이모지 1자 = 1). `app.PRODUCT_*_MAX` 로
+  동적 참조하며, 상수↔DDL↔프론트 3자 동치는 구조 테스트가 강제한다.
+- AC-0638a: 「공개/비공개」를 가르는 `default_role_access` 는 **JSON boolean 만** 받는다 —
+  키 부재는 `true`(기존 호환), 그 외 타입(`"false"` · `0` · `1` · `null` · 배열/객체)은
+  **400** `{"error": "접근 범위(default_role_access)는 true 또는 false 여야 합니다.",
+  "field": "default_role_access"}` 이고 쓰기 0. `POST` 와 `PATCH` 양쪽 동일하다 — 한쪽만
+  좁히면 그 비대칭이 정책 우회로가 된다. 근거: 느슨한 `bool()` 은 문자열 `"false"` 를 참으로
+  읽어 **비공개 의도를 전 역할 공개로 뒤집는다**(AC-0634 가 이 값의 위험도를 올렸다).
+- AC-0638: 길이 초과는 `POST /api/admin/products` · `PATCH /api/admin/products/{id}` ·
+  `PUT /api/admin/products/{id}/databases` 모두에서 **400**
+  `{"error": "설명은 255자 이내여야 합니다 (현재 N자)", "field": "description", "max": 255}`
+  (이름은 `field: "name"`, `max: 128`, 문안 「표시 이름은 128자 이내여야 합니다 (현재 N자)」).
+  400 이면 아무 것도 쓰지 않는다. 초과분을 조용히 절단하지 않는다.
+- AC-0639: 제품 CRUD 3핸들러(create · update · **delete**)의 저장 예외는 `_product_save_error()` 가 분류한다 — 중복 키(errno 1062 또는
+  `Duplicate entry`)→**409** 「이미 존재하는 product_key 입니다.」 · 길이(1406/1265 또는
+  `Data too long`/`Data truncated`)→**400** + `field`/`max` · 그 외→**500** 「제품 저장 실패」.
+  응답 본문에 드라이버 메시지·컬럼명·SQL 조각이 실리지 않으며 상세는 서버 로그(`warning`,
+  `exc_info`)에만 남는다. 종전 `f"제품 생성 실패: {exc}"` 가 `Data too long for column
+  'Description'` 을 노출했던 경로가 닫힌다(E-09b).
+  **범위 한정(정직 표기)**: 이 보장은 제품 CRUD 3핸들러에 한한다. 같은 라우터의 다른 family —
+  `audit write failed: {exc}` 계열 8곳(datasource/DB규칙/프롬프트 경로)과 LLM 502 1곳 — 은
+  ITEM-03 승인 범위 밖의 선재 부채로 남아 있다. 그 **모수 9곳**을 구조 테스트
+  (`test_a8h_product_mutation_500s_do_not_echo_exception_text`)가 고정하므로 이 클래스가
+  조용히 늘어나지는 못한다. 잔여 해소는 후속 항목이다.
+- AC-0640: 관리 콘솔 제품 화면 — 상세의 이름·설명 input 에 `maxLength` 와 「N/최대」 카운터
+  (`.admin-char-counter`, 상한 도달 시 `.is-limit`)가 붙는다. 제품 생성 흐름(`startNewProduct`)은
+  설명을 입력받고 접근 범위(공개/비공개)를 묻는다 — 취소는 모든 단계에서 생성 중단이고,
+  인식하지 못한 접근 범위 답은 임의 해석하지 않고 재질문한다. 일괄 적용 실패 토스트는
+  `N건 실패, M건 성공 — <첫 실패 사유>` 를 보여주며, 실패한 항목은 pending 에 남아 입력이 보존된다.
+- AC-0641: 고립 Product(= 접근 가능한 활성 계정 0) 진단·복구 도구가 있다 —
+  `unit/feature-0003-agent-web-ui/scripts/product_access_repair.py` +
+  `bin/product-access-repair.sh`. 기본 동작은 **읽기 전용 진단**이며 SELECT 외 문장을 실행하지
+  않는다. 진단 모수는 **활성·비활성 제품 전부**이고(`--active-only` 로만 좁힌다) —
+  고립 제품은 운영자가 이미 비활성으로 내려 둔 경우가 흔해, 활성만 훑으면 도구가 자기가
+  만들어진 이유인 데이터를 숨긴다(2026-09-10 라이브 dry-run 실측). 유효 grantee 판정은 런타임 정본(`web_context._apply_permission_overrides`)과 같은 규칙
+  (allow override → 접근 · deny override → 차단 · 그 외 → **활성 역할**의 grant). 동적 권한 행
+  자체가 없는 제품은 `missing_permission` 으로 구분 보고한다. 복구는
+  `--apply --product <id> --grant-account <id>` 로 **운영자가 지정한 계정 1개**에만 allow 1행을
+  넣으며(자동 선택 없음), 이미 allow 면 무변경(멱등), 명시 `deny` 는 뒤집지 않고 중단한다.
+  `--operator <계정Id>`(필수)가 감사행의 actor 이며 `WebAuditEvents.ActorAccountId` 를 채운다 —
+  없거나 비활성이면 `operator_not_found`/`operator_inactive` 로 **아무 것도 쓰지 않고** 종료한다.
+  권한 행 + 감사행(`admin.product.access.repair`, actor_type=account, TargetAccountId=부여 계정,
+  ChangeJson 에 operator·host OS 사용자)이 단일 commit 이고 영향 행 0 이면 rollback 이다.
+  대상 컨테이너의 `app` 에 필요한 심볼이 없으면(구세대 이미지) 사유를 남기고 exit 2 로 닫힌다. 적용 후 같은 진단을 재실행해 잔여 0 을 출력으로 대조한다.
+  절차 정본: `docs/RUNBOOK-product-access-repair.md`.

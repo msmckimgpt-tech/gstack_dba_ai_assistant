@@ -4007,6 +4007,11 @@ from routers.conversations import (  # noqa: E402
 )
 from routers._bootstrap_schema import (  # noqa: E402
     SEED_ROLE_SYSTEM_PROMPTS,
+    # ITEM-03 (DQA-09 설명 길이): 제품 텍스트 컬럼 길이 정본 — `app.PRODUCT_*_MAX` 로 동적 참조.
+    PRODUCT_DESCRIPTION_MAX,
+    PRODUCT_NAME_MAX,
+    PERMISSION_DESCRIPTION_MAX,
+    PERMISSION_LABEL_MAX,
 )
 from routers._prompt_context import (  # noqa: E402
     _ROLE_CAPABILITY_HINTS,

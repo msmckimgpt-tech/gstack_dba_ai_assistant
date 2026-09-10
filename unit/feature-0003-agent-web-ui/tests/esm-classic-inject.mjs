@@ -27,6 +27,13 @@ export function stripEsmForClassicInject(src) {
   return src
     .replace(/^import\s+"[^"]+";.*$/gm, "")  // bare(side-effect) import 선행 제거 — from-규칙의 다음 문장 월경(over-consumption) 차단
     .replace(/^import\s[^;]*?from\s+"[^"]+";.*$/gm, "")
+    // ITEM-03 (2026-09-10): **재export-from** (`export { a, b } from "./x.js";`) 도 배선이다.
+    // 이 규칙이 없으면 그 줄이 남아 classic 주입 스크립트 전체가 SyntaxError 로 죽는데,
+    // jsdom 은 그 오류를 virtualConsole 로만 흘리므로 «심볼이 그냥 undefined» 로 보인다
+    // (`admin/llm-state.js` 의 `gateLlmControl` 에서 실측 — 하네스는 무관한 실패로 위장됐다).
+    // `{…} from` 이 있는 형태를 **먼저** 지운다 — 아래 `{…};` 규칙보다 앞이어야 매칭된다.
+    .replace(/^export\s*\{[^}]*\}\s*from\s+"[^"]+";.*$/gm, "")
+    .replace(/^export\s*\*\s*from\s+"[^"]+";.*$/gm, "")
     .replace(/^export\s*\{[^}]*\};.*$/gm, "")
     .replace(/^export\s+(?=(async\s+)?(function|const|let|var|class))/gm, "");
 }

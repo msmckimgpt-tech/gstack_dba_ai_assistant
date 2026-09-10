@@ -76,7 +76,7 @@ sources:
 |---|---|---|---|---|
 | feature-0001-platform-runtime | in-progress | 2026-07-28 | [TASK](../unit/feature-0001-platform-runtime/docs/TASK.md) | 엄격한 운영 시나리오(TEST-0003) 확정 + 라이브 실측 PASS — Completion Checklist 전건 충족 |
 | feature-0002-agent-core | in-progress | 2026-09-08 | [TASK](../unit/feature-0002-agent-core/docs/TASK.md) | 여섯 계층 프롬프트 전달 검증 및 조회 실패 은폐 차단 |
-| feature-0003-agent-web-ui | in-progress | 2026-09-09 | [TASK](../unit/feature-0003-agent-web-ui/docs/TASK.md) | 위임한 '자동 작성' 결과가 화면에 도달하지 않던 결함 수정(3진입점 + 폴링 권한 축) |
+| feature-0003-agent-web-ui | in-progress | 2026-09-10 | [TASK](../unit/feature-0003-agent-web-ui/docs/TASK.md) | 비공개 Product 원자 생성·초기 접근 권한 + 고립 진단·복구 + Description 길이 검증 (ITEM-03) |
 | feature-0004-browser-automation | in-progress | 2026-07-28 | [TASK](../unit/feature-0004-browser-automation/docs/TASK.md) | 엄격한 브라우저 시나리오(TEST-0003) 확정 + 라이브 왕복·scheme 가드 PASS — Completion Checklist 전건 충족 |
 | feature-0005-qa-mcp | in-progress | 2026-07-28 | [TASK](../unit/feature-0005-qa-mcp/docs/TASK.md) | 엄격한 QA 시나리오(TEST-0003) 확정 + MCP 왕복·실 DB 메타데이터 반환 PASS — Completion Checklist 전건 충족 |
 | feature-0006-lan-proxy-access | in-progress | 2026-09-02 | [TASK](../unit/feature-0006-lan-proxy-access/docs/TASK.md) | caddy 운영 자산 이관 완료 · _get_client_ip X-Forwarded-For conditional trust(SECURITY.md §9.7) · (06-17) 사내 자체 Root CA 신뢰 배포(self-signed 탈피)·caddy :443 정식 front door·테스터 Root C… (상세는 TASK) |

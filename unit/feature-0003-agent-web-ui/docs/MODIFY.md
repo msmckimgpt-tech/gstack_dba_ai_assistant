@@ -6597,3 +6597,64 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
 ## CHG-20260910T114800-postmerge-record
 - Timestamp: 2026-09-10T11:48:00+09:00
 - 통합6bdcc7ba의 최신1.4.0 제품 보존과 출하 증적을 확인했다. merge combined diff를 읽는 post-commit gate의 checkbox/CHG/REVIEW 미인식은 정상 후속 문서 커밋으로 정합한다. 제품·운영 bytes 추가 변경 없음.
+
+## CHG-20260910T130000-item03-product-atomic-create
+- Timestamp: 2026-09-10T13:00:00+09:00
+- Related TASK: TASK-20260910-item03-product-atomic-create (설계 `docs/improvements/dqa-field-audit-20260910/DESIGN.md` ITEM-03, DQA-03·DQA-09 설명 길이·UX-06)
+- 위험도: **Critical** (§12.3 인가 데이터 생성 경로). 승인: 사용자 AskUserQuestion 2026-09-10 「3건 모두 승인」.
+
+**변경**
+
+1. `src/routers/admin_products.py`
+   - 신규 `_product_length_error()` — 제품 텍스트 필드의 **문자 수** 상한 판정 → 400
+     `{"error","field","max"}`. 초과분을 자르지 않는다(무음 절단 금지).
+   - 신규 `_product_save_error()` — 저장 예외 분류: 중복 키(1062)→409 · 길이(1406/1265)→400 ·
+     그 외→500 「제품 저장 실패」. 드라이버 원문·SQL 조각은 서버 로그에만(E-09b 정면 해소).
+   - 신규 `_grant_product_access_to_account()` — `WebAccountPermissionOverrides(allow)`
+     **INSERT 1행만**. `admin_accounts.py::_set_account_overrides` 의 DELETE-후-재삽입을
+     상속하지 않는다. 영향 행 0 이면 `RuntimeError`(caller rollback).
+   - `admin_create_product` — 제품 INSERT · 동적 권한 INSERT · (공개면) 역할 backfill /
+     (비공개면) 생성자 grant · **감사행**까지 한 트랜잭션 1 commit 으로 병합(종전 2 commit,
+     E-03d). 어느 단계든 실패·영향행 0 이면 전체 rollback. 길이 검증을 게이트 직후에 추가.
+     응답에 `initial_access_account_id` 추가(비공개 생성 시).
+   - `admin_update_product` — 같은 상한·같은 응답 형식의 길이 검증(락 획득 후 rollback·close
+     경로 포함) + 500 핸들러를 `_product_save_error` 로 교체.
+   - `admin_update_product_databases` — `WebProductDatabases.Description` 도 동일 상한 검증.
+2. `src/routers/_bootstrap_schema.py` — DDL 길이 정본 상수 `PRODUCT_NAME_MAX = 128` ·
+   `PRODUCT_DESCRIPTION_MAX = 255` 신설(단위·근거 주석 동반). DDL 본문은 무변경.
+3. `src/app.py` — 꼬리 rebind 에 두 상수 추가(`app.PRODUCT_*_MAX` 동적 참조 보존).
+4. `src/static/admin/products.js` — `PRODUCT_DESCRIPTION_MAX`/`PRODUCT_NAME_MAX` 프론트 상수 +
+   `_attachCharCounter()`; 상세 이름·설명 input 에 `maxLength` + 남은 글자 카운터;
+   `startNewProduct()` 에 설명 입력·접근 범위(공개/비공개) 선택 추가(인식 못한 답은 재질문).
+5. `src/static/admin.js` — 일괄 적용 실패 토스트가 `failures[0].error.message` 를 표시
+   (종전엔 `first` 를 계산만 하고 미표시 — 실패분은 pending 에 남아 입력이 보존된다).
+6. `src/static/css/admin.css` — `.admin-char-counter` / `.is-limit` (기존 토큰만 사용).
+7. 신규 `scripts/product_access_repair.py` + `bin/product-access-repair.sh` — 고립 Product
+   진단(읽기 전용, 기본)·복구(`--apply --product --grant-account`, 운영자 지정 1계정만).
+   RUNBOOK: `docs/RUNBOOK-product-access-repair.md`.
+8. 신규 `tests/test_product_create_atomic.py` (45 케이스).
+9. `tests/test_web_perf_p1.py::test_product_crud_invalidates_catalog_cache` — 캐시 무효화
+   단언을 **파일 전체 호출 개수(>=4)** 에서 **핸들러별 존재 여부(AST)** 로 전환. 종전 4 는
+   create 의 2-commit 구조 산물이라 이번 병합으로 3 이 됐다(동작은 정합해진 변경). 개수 단언은
+   호출이 한 핸들러에 몰려도 통과하던 약점이 있었다(§16.7 G12).
+
+**교차 기록 없음**: `admin_accounts.py`·`admin_roles.py` 는 **읽기만** 했다(self-scope 가드
+무변경 — 구조 테스트로 잠금). `shared/**` 미변경.
+
+## CHG-20260910T163000-item03-repair-default-scope
+- Timestamp: 2026-09-10T16:30:00+09:00
+- Related TASK: TASK-20260910-item03-product-atomic-create
+- 위험도: Minor (진단 도구의 기본 모수 확대 — 인가 변경 없음, 읽기 경로만).
+
+**변경**: `scripts/product_access_repair.py` 의 진단 기본 모수를 「활성 제품만」 →
+**「활성·비활성 전부」** 로 뒤집었다. `--include-inactive` 를 폐기하고 좁히는 쪽
+`--active-only` 를 신설. `bin/product-access-repair.sh` 사용 예시 ·
+`docs/RUNBOOK-product-access-repair.md` §3 · `docs/FUNCTION.md` AC-0641 ·
+`tests/test_product_create_atomic.py`(`test_a11c` 방향 반전 + `test_a11h2` 신설) 동반 갱신.
+
+**사유**: 라이브 dry-run 실측(2026-09-10) — 기본 실행이 **「고립 Product 없음」**을 출력했다.
+요구서·EVIDENCE E-03a 가 지목한 고립 제품 990002(`DK_KR_S3_20260903`)가 **비활성**이라
+기본 모수에서 빠졌기 때문이다. 진단 도구가 자기가 만들어진 이유인 데이터를 기본 실행에서
+숨기는 형태였고, 단위 테스트는 그 배제를 *의도된 동작*으로 고정해 전부 통과하고 있었다
+(AGENTS §16.7 G12 — 게이트 모수가 노출면 전체와 어긋난 사례). 고립 제품은 운영자가 이미
+비활성으로 내려 둔 경우가 오히려 흔하므로 넓게 보는 것이 기본이어야 한다.

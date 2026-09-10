@@ -12,6 +12,28 @@ import os
 import app  # noqa: F401 — app.X 동적 참조(꼬리 rebind 시점 import — 순환 안전)
 
 
+# ── ITEM-03 (DQA-09 설명 길이): 제품 텍스트 컬럼의 DDL 길이 정본 ────────────────────
+# 이 두 상수는 **아래 DDL 의 값과 같아야 한다** — `WebProducts`(`Name VARCHAR(128)` ·
+# `Description VARCHAR(255)`) 와 `WebProductDatabases`(`Description VARCHAR(255)`).
+# 단위는 **문자 수**다: MySQL utf8mb4 의 `VARCHAR(N)` 은 바이트가 아니라 문자 N 이므로
+# 한글 1자 = 1, 이모지(BMP 밖 4바이트) 도 1 로 센다 — 그래서 API 의 `len(str)`(파이썬 코드
+# 포인트 수) 판정이 DDL 과 같은 축이 된다(단 U+FFFF 밖 문자는 파이썬도 1 코드포인트).
+# API 검증(`routers/admin_products.py::_product_length_error`)이 이 상수를 읽어 400 을 내며,
+# DDL 과의 동치는 `tests/test_product_create_atomic.py` 의 구조 가드가 강제한다(수기 표류 차단).
+PRODUCT_NAME_MAX = 128
+PRODUCT_DESCRIPTION_MAX = 255
+
+# 동적 제품 권한 행(`WebPermissions`)의 DDL 길이 — 위 `WebPermissions` DDL 과 같아야 한다.
+# ⚠️ 제품 이름은 **두 곳**에 쓰인다: `WebProducts.Name`(128) 과 `WebPermissions.Label` 의
+# `f"제품 접근 — {name}"`. 접두 8자 때문에 Label 의 실효 여유는 120자이므로, 121~128자짜리
+# 정당한 이름이 `Name` 검사를 통과하고도 `Label` 에서 1406 으로 죽는다(적대 검증 P1 실측).
+# 해결은 사용자 이름을 더 좁히는 게 아니라 **우리가 만든 파생 문자열을 컬럼 길이로 clip** 하는
+# 것이다 — 같은 규약이 `model_access` seed 에 이미 있다
+# (`tests/test_model_access_rbac.py::test_g9_seed_clips_label_and_description_to_column_limits`).
+PERMISSION_LABEL_MAX = 128
+PERMISSION_DESCRIPTION_MAX = 255
+
+
 def _ensure_web_product_datasources_schema(conn) -> None:
     """TASK-0228 (멀티 datasource 1:N): 제품 ↔ 여러 datasource 바인딩 join 테이블 + 접근DB 의
     datasource 차원화. 멱등 CREATE/ALTER + 레거시(`WebProducts.DatasourceKey` 단일 바인딩) 이전.

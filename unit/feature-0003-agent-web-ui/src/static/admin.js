@@ -3926,8 +3926,22 @@ async function applyAllPending() {
   applyBtn.textContent = "모두 적용";
 
   if (failures.length) {
+    // ITEM-03 / E-09b: 종전엔 `first` 를 계산만 하고 **표시하지 않아** 운영자가 「N건 실패」
+    // 만 보고 사유를 알 수 없었다(설명 길이 초과처럼 고칠 수 있는 실패도 묻혔다). 첫 실패
+    // 사유를 함께 보여준다 — pending 은 실패분이 남아 있으므로 입력이 보존된다.
     const first = failures[0];
-    showToast(`${failures.length}건 실패, ${ok}건 성공`, true);
+    const reason = String(first?.error?.message || first?.error || "").trim();
+    // 실패는 여러 kind(계정·역할·제품·데이터소스·프롬프트·런타임설정…)에 걸칠 수 있다.
+    // 첫 사유만 보여 주면 그것이 **모든** 실패의 이유로 읽혀, 운영자가 하나만 고치고
+    // 나머지가 왜 남았는지 모르게 된다(적대 검증 지적) → 사유가 갈리면 그 사실을 알린다.
+    const mixed = failures.some((f) => f.kind !== first.kind);
+    const tail = mixed ? ` (외 ${failures.length - 1}건은 다른 사유)` : "";
+    showToast(
+      reason
+        ? `${failures.length}건 실패, ${ok}건 성공 — ${reason}${tail}`
+        : `${failures.length}건 실패, ${ok}건 성공`,
+      true,
+    );
   } else {
     showToast(`${ok}건 적용됨`);
   }

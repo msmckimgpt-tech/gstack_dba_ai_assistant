@@ -20,6 +20,33 @@ import { matchesAnyVariant, searchVariants } from "../hangul-qwerty.js?v=dev";
 
 /* ── Products pane ───────────────────────────────────────────────────── */
 
+// ITEM-03 (DQA-09 설명 길이): 서버 DDL 상한과 **같은 값**이어야 한다 —
+// 백엔드 정본은 `routers/_bootstrap_schema.py` 의 `PRODUCT_DESCRIPTION_MAX` /
+// `PRODUCT_NAME_MAX` (= `WebProducts.Description VARCHAR(255)` / `Name VARCHAR(128)`).
+// 이 상수는 «서버 왕복 전에 알려주기» 용 표시축이고 집행은 서버 400 이다(display-permissive ·
+// backend-enforced). BE↔FE 값 일치는 `tests/test_product_create_atomic.py` 가 강제한다.
+const PRODUCT_DESCRIPTION_MAX = 255;
+const PRODUCT_NAME_MAX = 128;
+
+// 입력 옆에 «N/최대» 카운터를 붙이고 입력마다 갱신한다. 반환값은 카운터 요소(호출부가 append).
+function _attachCharCounter(inputEl, maxLen) {
+  const counter = document.createElement("span");
+  counter.className = "admin-char-counter";
+  // 이 요소는 감싸는 `<label>` 안에 있다 — 래핑 label 의 접근가능 이름은 자손 텍스트를
+  // 이어붙이므로, 그냥 두면 입력의 이름이 «설명 3/255» 처럼 **타이핑마다 바뀌는 숫자**를
+  // 포함하게 된다(적대 검증 지적). 시각 표시 전용으로 감춘다 — 상한 자체는 `maxlength` 를
+  // 통해 보조기술이 이미 알린다.
+  counter.setAttribute("aria-hidden", "true");
+  const paint = () => {
+    const used = String(inputEl.value || "").length;
+    counter.textContent = `${used}/${maxLen}`;
+    counter.classList.toggle("is-limit", used >= maxLen);
+  };
+  inputEl.addEventListener("input", paint);
+  paint();
+  return counter;
+}
+
 // TASK-0253: 특정 제품의 완료율이 로딩 중인지. 배지/상세가 "측정 중…" 표시 여부 판정에 쓴다.
 function _isProductCoverageLoading(productId) {
   return adminState.productCoverageLoadingIds.has(Number(productId));
@@ -808,10 +835,12 @@ function renderProductDetail() {
   nameInput.type = "text";
   nameInput.value = merged.name;
   nameInput.disabled = !canManage;
+  // ITEM-03: DDL 상한(`Name VARCHAR(128)`) 을 입력 단계에서 고정 — 넘겨 붙여넣을 수 없다.
+  nameInput.maxLength = PRODUCT_NAME_MAX;
   nameInput.addEventListener("input", () => {
     setProductMetaPending(product.id, { name: nameInput.value.trim() });
   });
-  nameField.append(nameLabel, nameInput);
+  nameField.append(nameLabel, nameInput, _attachCharCounter(nameInput, PRODUCT_NAME_MAX));
   paneEl.appendChild(nameField);
 
   // Description
@@ -823,10 +852,13 @@ function renderProductDetail() {
   descInput.type = "text";
   descInput.value = merged.description;
   descInput.disabled = !canManage;
+  // ITEM-03 / E-09b: 종전엔 maxlength 가 없어 256자 이상이 그대로 전송되고 서버가
+  // `Data too long for column 'Description'` 을 500 으로 돌려줬다.
+  descInput.maxLength = PRODUCT_DESCRIPTION_MAX;
   descInput.addEventListener("input", () => {
     setProductMetaPending(product.id, { description: descInput.value.trim() });
   });
-  descField.append(descLabel, descInput);
+  descField.append(descLabel, descInput, _attachCharCounter(descInput, PRODUCT_DESCRIPTION_MAX));
   paneEl.appendChild(descField);
 
   // Toggles + sort
@@ -2084,22 +2116,80 @@ function renderProductDetail() {
   }
 }
 
+// 생성 흐름의 미완성 입력. 어느 단계에서 취소해도 **다음 호출에 되살린다** — 4단계째에서
+// 취소 한 번에 이미 작성한 설명(최대 255자)까지 사라지던 문제(적대 검증 P1). 이 캐시는
+// pending 스토어가 아니다: 서버에 아무것도 만들지 않으며 새로고침하면 사라진다.
+let _newProductDraft = { key: "", name: "", description: "" };
+
 function startNewProduct() {
-  const key = (window.prompt("Product Key (A-Z0-9_, 32자 이내)") || "").trim().toUpperCase();
+  const draft = _newProductDraft;
+  const keyRaw = window.prompt("Product Key (A-Z0-9_, 32자 이내)", draft.key || "");
+  if (keyRaw === null) return;                       // 취소 — 초안은 보존
+  const key = String(keyRaw).trim().toUpperCase();
   if (!key) return;
+  draft.key = key;
   if (!/^[A-Z][A-Z0-9_]{0,31}$/.test(key)) {
-    showToast("Key 형식 오류", true);
+    showToast("Key 형식 오류 — A-Z/0-9/_ 만, 영문 대문자로 시작", true);
     return;
   }
-  const name = (window.prompt("표시 이름", key) || "").trim();
+  const nameRaw = window.prompt(`표시 이름 (${PRODUCT_NAME_MAX}자 이내)`, draft.name || key);
+  if (nameRaw === null) return;
+  const name = String(nameRaw).trim();
   if (!name) return;
+  draft.name = name;
+  if (name.length > PRODUCT_NAME_MAX) {
+    showToast(`표시 이름은 ${PRODUCT_NAME_MAX}자 이내여야 합니다 (현재 ${name.length}자)`, true);
+    return;
+  }
+  // ITEM-03 / E-09b: 설명 입력을 생성 흐름에 넣는다(종전엔 항상 빈 문자열로 전송돼 생성
+  //   직후 상세에서 다시 입력해야 했다). 상한 초과분은 **자동으로 자르지 않고** 입력값을
+  //   보존한 채 다시 묻는다 — 무엇이 잘렸는지 알 수 없는 무음 절단을 만들지 않는다.
+  let description = draft.description || "";
+  for (;;) {
+    const raw = window.prompt(`설명 (선택 · ${PRODUCT_DESCRIPTION_MAX}자 이내)`, description);
+    if (raw === null) return;  // 취소 = 생성 중단 (초안은 보존 — 다시 열면 그대로 채워진다)
+    description = String(raw).trim();
+    draft.description = description;
+    if (description.length <= PRODUCT_DESCRIPTION_MAX) break;
+    showToast(`설명은 ${PRODUCT_DESCRIPTION_MAX}자 이내여야 합니다 (현재 ${description.length}자)`, true);
+  }
+  // ITEM-03 (DQA-03): 「비공개」 = `DefaultRoleAccess=0` — 어떤 역할에도 접근이 자동
+  //   부여되지 않고, 서버가 같은 트랜잭션에서 **생성자 계정에만** 접근 권한을 넣는다.
+  //   인가 경계 입력이므로 인식 못한 답을 임의 해석하지 않고 다시 묻는다(조용한 오독 금지).
+  //   ⚠️ 되돌릴 수 없는 선택이다 — 공개로 만들면 전 역할에 grant 가 이미 나가므로 나중에
+  //   토글을 꺼도 그 grant 는 사라지지 않는다. 그래서 (a) 인식 못한 답을 임의 해석하지 않고
+  //   다시 묻고, (b) 확정 직전에 무엇이 만들어지는지 한 번 더 보여 준다.
+  let defaultRoleAccess = true;
+  for (;;) {
+    const raw = window.prompt(
+      "접근 범위 — '공개' 또는 '비공개' 입력\n\n공개: 모든 역할이 접근\n비공개: 나만 접근 (뒤에 개별 부여)",
+      "공개",
+    );
+    if (raw === null) return;
+    const answer = String(raw).trim();
+    if (/^(공개|public|pub|o)$/i.test(answer)) { defaultRoleAccess = true; break; }
+    if (/^(비공개|private|priv|p|x)$/i.test(answer)) { defaultRoleAccess = false; break; }
+    showToast("'공개' 또는 '비공개' 로 입력해 주세요.", true);
+  }
+  if (!window.confirm(
+    `${key} 를 ${defaultRoleAccess ? "공개(모든 역할 접근)" : "비공개(나만 접근)"} 로 만듭니다.\n\n` +
+    "접근 범위는 생성 후 되돌릴 수 없습니다. 계속할까요?"
+  )) return;
   apiFetch("/api/admin/products", {
     method: "POST",
-    body: JSON.stringify({ product_key: key, name, description: "" }),
+    body: JSON.stringify({
+      product_key: key,
+      name,
+      description,
+      default_role_access: defaultRoleAccess,
+    }),
   })
     .then(async (payload) => {
       adminState.selectedProductId = Number(payload.product_id);
-      showToast("제품을 생성했습니다.");
+      _newProductDraft = { key: "", name: "", description: "" };   // 성공 — 초안 비움
+      showToast(defaultRoleAccess
+        ? "제품을 생성했습니다."
+        : "비공개 제품을 생성했습니다 — 지금은 나만 접근할 수 있습니다.");
       await loadAdminData();
     })
     .catch((error) => {

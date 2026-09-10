@@ -1213,6 +1213,115 @@ async def admin_product_insight_reset(request: Request, pid: int) -> JSONRespons
     finally:
         conn.close()
 
+# ── ITEM-03: 제품 텍스트 길이 검증 · 저장 실패 분류 · 생성 시점 접근 grant ────────────
+# 근거: DESIGN `docs/improvements/dqa-field-audit-20260910/DESIGN.md` ITEM-03 (E-03b~e · E-09b).
+# 길이 상한 정본은 `routers/_bootstrap_schema.py` 의 `PRODUCT_{NAME,DESCRIPTION}_MAX`
+# (= DDL `VARCHAR(...)`). 여기서 재선언하지 않고 `app.X` 로 동적 참조한다.
+
+# `WebProductDatabases.SchemaName VARCHAR(64)` (routers/_bootstrap_schema.py) 와 같아야 한다.
+_SCHEMA_NAME_MAX = 64
+
+
+def _product_length_error(field: str, label: str, value: str, max_len: int) -> JSONResponse | None:
+    """제품 텍스트 필드가 컬럼 길이를 넘으면 400 JSONResponse, 아니면 None.
+
+    판정 단위는 **문자 수**다(`len(str)`) — MySQL utf8mb4 `VARCHAR(N)` 이 문자 N 이므로
+    한글 1자 = 1. 초과분을 조용히 자르지 않는다: 운영자가 입력한 설명이 말없이 절단되면
+    「저장됐다」와 「저장된 내용」이 어긋난다(AGENTS §16.7 G9-b 무음 절단 금지).
+    """
+    length = len(value or "")
+    if length <= int(max_len):
+        return None
+    return JSONResponse(
+        {
+            "error": f"{label}은 {int(max_len)}자 이내여야 합니다 (현재 {length}자)",
+            "field": field,
+            "max": int(max_len),
+        },
+        status_code=400,
+    )
+
+
+def _product_save_error(exc: Exception, *, fallback: str = "제품 저장 실패") -> JSONResponse:
+    """제품 저장 예외를 사용자 응답으로 **분류**한다 — 예외 문자열·SQL 단편을 노출하지 않는다.
+
+    E-09b 실측: 종전 핸들러는 `f"제품 생성 실패: {exc}"` 로 드라이버 메시지를 그대로 반환해
+    `Data too long for column 'Description'` 같은 내부 스키마 정보가 운영자 화면에 떴다.
+    분류만 응답에 싣고 상세는 서버 로그에만 남긴다.
+
+      - 중복 키(1062) → 409 (이미 존재하는 product_key)
+      - 길이 초과/절단(1406·1265) → 400 + `field`/`max` (검증을 우회한 경로의 방어선)
+      - 그 외 → 500 + 고정 문안
+    """
+    log = logging.getLogger(__name__)
+    log.warning("product save failed: %r", exc, exc_info=True)
+    errno = 0
+    try:
+        errno = int(getattr(exc, "errno", 0) or 0)
+    except Exception:
+        errno = 0
+    text = str(exc)
+    if errno == 1062 or "Duplicate entry" in text:
+        return app._json_error("이미 존재하는 product_key 입니다.", 409)
+    if errno in (1406, 1265) or "Data too long" in text or "Data truncated" in text:
+        # 컬럼명은 드라이버 메시지에서만 알 수 있다. **정확한 토큰**으로 뽑는다 —
+        # 종전의 `"Name" in text` 부분문자열 검사는 `SchemaName`·`GroupName` 을 「표시 이름」
+        # 으로 오분류하고, `Label` 은 아무 분기에도 안 걸려 「입력은 255자」라는 **틀린** 400 을
+        # 냈다(적대 검증 P1·P2). 사용자 입력에 매핑되지 않는 컬럼은 400 으로 위장하지 않고
+        # 일반 500 으로 보낸다 — 잘못된 필드 안내는 침묵보다 나쁘다.
+        column = ""
+        match = re.search(r"column '([^']+)'", text)
+        if match:
+            column = match.group(1)
+        _known: dict[str, tuple[str, str, int]] = {
+            "Description": ("description", "설명", int(app.PRODUCT_DESCRIPTION_MAX)),
+            "Name": ("name", "표시 이름", int(app.PRODUCT_NAME_MAX)),
+        }
+        if column in _known:
+            field, label, max_len = _known[column]
+            payload: dict[str, Any] = {
+                "error": f"{label}은 {max_len}자 이내여야 합니다.",
+                "field": field,
+                "max": max_len,
+            }
+            return JSONResponse(payload, status_code=400)
+        # 알 수 없는 컬럼(파생 문자열·다른 테이블) — 컬럼명·원문을 노출하지 않고 500.
+        log.warning("product save: unmapped length error column=%r", column)
+        return app._json_error(fallback, 500)
+    return app._json_error(fallback, 500)
+
+
+def _grant_product_access_to_account(conn, account_id: int, permission_id: int) -> None:
+    """생성 트랜잭션 안에서 **계정 1건**에 제품 접근 allow override 행 1개를 INSERT 한다.
+
+    ⚠️ `routers/admin_accounts.py::_set_account_overrides` 의 «`DELETE … WHERE AccountId`
+    후 전체 재삽입» 로직을 **상속하지 않는다**. 그 함수는 관리 콘솔의 override 편집(제출된
+    map 으로 전체 교체)용이므로 여기서 재사용하면 생성자가 이미 가진 다른 override 가 모두
+    지워진다. 본 함수는 INSERT 1행만 수행하며 기존 행을 읽지도 지우지도 않는다.
+
+    영향 행이 0 이면 `RuntimeError` — caller 가 전체 트랜잭션을 rollback 한다
+    (「권한 없는 고립 제품이 commit 되는」 E-03b 결함의 재발 차단).
+    """
+    aid = int(account_id or 0)
+    pid = int(permission_id or 0)
+    if aid <= 0 or pid <= 0:
+        raise RuntimeError(f"product access grant target invalid (account={aid}, permission={pid})")
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+INSERT INTO WebAccountPermissionOverrides (AccountId, PermissionId, OverrideValue)
+VALUES (%s, %s, %s)
+            """,
+            (aid, pid, app.OVERRIDE_ALLOW),
+        )
+        affected = int(getattr(cur, "rowcount", 0) or 0)
+    finally:
+        cur.close()
+    if affected < 1:
+        raise RuntimeError("product access grant affected 0 rows")
+
+
 @router.post("/api/admin/products")
 async def admin_create_product(request: Request) -> JSONResponse:
     try:
@@ -1233,17 +1342,53 @@ async def admin_create_product(request: Request) -> JSONResponse:
     product_key = str(data.get("product_key") or "").strip().upper()
     name = str(data.get("name") or "").strip()
     description = str(data.get("description") or "").strip()
-    sort_order = int(data.get("sort_order") or 100)
+    # ITEM-03 (적대 검증 §3): `int("abc")` 는 try 블록 **밖**에서 터져 처리되지 않은
+    # ValueError → 500 traceback 이 된다. 같은 입력 검증 계열이므로 400 으로 닫는다.
+    try:
+        sort_order = int(data.get("sort_order") or 100)
+    except (TypeError, ValueError):
+        conn.close()
+        return JSONResponse(
+            {"error": "정렬 순서는 정수여야 합니다.", "field": "sort_order"},
+            status_code=400,
+        )
     is_active = bool(data.get("is_active", True))
     is_default = bool(data.get("is_default", False))
     # TASK-0053: product 의 default-role-access 정책 (D2-A 호환 default=True).
-    default_role_access = bool(data.get("default_role_access", True))
+    # ITEM-03 (패널 security §3-3): 이 하나의 boolean 이 「전 역할 공개」와 「생성자 1인」을
+    # 가른다 — 느슨한 `bool()` 은 문자열 `"false"` 를 **참**으로 읽어 비공개 의도를 전 역할
+    # 공개로 뒤집는다(ITEM-03 이 이 값의 위험도를 올렸으므로 파싱도 함께 좁힌다).
+    # 부재 → True(기존 호환), JSON boolean → 그대로, 그 외 타입 → 400(조용한 오독 금지).
+    if "default_role_access" in data:
+        _dra_raw = data.get("default_role_access")
+        if not isinstance(_dra_raw, bool):
+            conn.close()
+            return JSONResponse(
+                {
+                    "error": "접근 범위(default_role_access)는 true 또는 false 여야 합니다.",
+                    "field": "default_role_access",
+                },
+                status_code=400,
+            )
+        default_role_access = _dra_raw
+    else:
+        default_role_access = True
     if not product_key or not name:
         conn.close()
         return app._json_error("product_key 와 name 은 필수입니다.", 400)
     if not re.match(r"^[A-Z][A-Z0-9_]{0,31}$", product_key):
         conn.close()
         return app._json_error("product_key 는 A-Z/0-9/_ 만, 1~32자 영문대문자로 시작.", 400)
+    # ITEM-03 / E-09b: DDL 길이(`VARCHAR`) 를 API 에서 먼저 판정 — 종전엔 검사 없이 INSERT 해
+    # 드라이버의 `Data too long for column 'Description'` 이 500 으로 그대로 노출됐다.
+    for _field, _label, _value, _max in (
+        ("name", "표시 이름", name, app.PRODUCT_NAME_MAX),
+        ("description", "설명", description, app.PRODUCT_DESCRIPTION_MAX),
+    ):
+        _len_error = _product_length_error(_field, _label, _value, _max)
+        if _len_error is not None:
+            conn.close()
+            return _len_error
     cur = conn.cursor()
     cur.execute("SELECT COUNT(*) FROM WebProducts WHERE ProductKey = %s", (product_key,))
     if int((cur.fetchone() or (0,))[0] or 0) > 0:
@@ -1255,7 +1400,17 @@ async def admin_create_product(request: Request) -> JSONResponse:
     # WebProducts INSERT + WebPermissions INSERT (`product.access.<key>`, IsDynamic=1, ProductId=<new_id>)
     # + 모든 기존 role 에 grant backfill (D2-A 정책) 까지 한 commit/rollback. 부분 실패 시 product 자체를
     # 롤백해 drift 차단.
+    #
+    # ITEM-03 (DQA-03, Critical §12.3 — 사용자 승인 2026-09-10): 위 트랜잭션이 **감사 행과
+    # 초기 접근 권한을 포함**하도록 확장한다.
+    #  - E-03b: `default_role_access=false`(=비공개) 면 동적 권한 코드를 만들되 **아무 주체에게도
+    #    grant 하지 않고 commit** 해 제품이 고립됐다. E-03c: 부여 경로 2곳이 「행위자가 보유한
+    #    코드만 부여」라 아무도 못 가진 코드는 영구 403 → 생성 시점에 **생성자 계정 1건**에
+    #    allow override 를 넣는 것이 유일한 정합 해소다(가드는 무변경).
+    #  - E-03d: 감사 행이 별도 두 번째 트랜잭션이라 「생성」이 2 commit 이었다 → 같은 tx 로 병합.
+    # 어느 단계든 실패하거나 **영향 행이 0** 이면 전체 rollback — 부분 상태를 남기지 않는다.
     new_id = 0
+    granted_account_id = 0
     try:
         conn.autocommit = False
         cur = conn.cursor()
@@ -1275,6 +1430,11 @@ VALUES (%s, %s, %s, %s, %s, %s, %s)
             ),
         )
         new_id = int(cur.lastrowid or 0)
+        # ITEM-03: 「영향 행 0 이면 전체 rollback」 불변식을 제품 행에도 적용한다. 이 검사가
+        # 없으면 `lastrowid` 가 0 일 때 아래 `WHERE Id <> 0` 이 **모든 제품의 IsDefault 를
+        # 0 으로 지우고**, `ProductId=0` 인 고아 권한 행이 생긴다(권한 행에만 있던 가드를 대칭화).
+        if new_id <= 0:
+            raise RuntimeError("product row insert lastrowid empty")
         if is_default:
             cur.execute("UPDATE WebProducts SET IsDefault = 0 WHERE Id <> %s", (new_id,))
         # 동적 권한 row 삽입 (Phase 1B 의 `_ensure_product_access_permissions` 와 동일 패턴, transaction 내 inline).
@@ -1286,8 +1446,15 @@ VALUES (%s, %s, %s, %s, %s, %s)
             """,
             (
                 permission_code,
-                f"제품 접근 — {name}",
-                f"이 계정은 {product_key} 제품에 접근할 수 있습니다 (대화 생성·pin·system prompt 읽기).",
+                # ITEM-03 (적대 검증 P1): 제품 이름은 `WebProducts.Name`(128) 과 이 Label(128)
+                # **두 곳**에 쓰이고, 여기엔 접두 8자가 붙는다. 121~128자짜리 정당한 이름이
+                # Name 검사를 통과하고도 Label 에서 1406 으로 죽었다 → 사용자 입력을 더 좁히지
+                # 않고 **우리가 만든 파생 문자열만 컬럼 길이로 clip** 한다(model_access seed 규약).
+                f"제품 접근 — {name}"[: int(app.PERMISSION_LABEL_MAX)],
+                (
+                    f"이 계정은 {product_key} 제품에 접근할 수 있습니다 "
+                    "(대화 생성·pin·system prompt 읽기)."
+                )[: int(app.PERMISSION_DESCRIPTION_MAX)],
                 "product_access",  # TASK-0288: 작업 화면 제품 사용 권한 그룹.
                 1,
                 new_id,
@@ -1307,24 +1474,18 @@ SELECT r.Id, %s FROM WebRoles r
                 (new_permission_id,),
             )
         cur.close()
-        conn.commit()
-        # feature-0028 (P1-B): 동적 권한(product.access.*) 변경 — 카탈로그 TTL 캐시 즉시 무효화.
-        app.invalidate_permission_catalog_cache()
-    except Exception as exc:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-        conn.autocommit = True
-        conn.close()
-        return app._json_error(f"제품 생성 실패: {exc}", 500)
-    finally:
-        try:
-            conn.autocommit = True
-        except Exception:
-            pass
-    # TASK-0073 Phase A5: same-tx audit hook (product create — after-state 만, before=None).
-    try:
+        # ITEM-03 (AC-03-1): 비공개(`DefaultRoleAccess=0`) 제품은 역할 grant 가 없으므로,
+        # **생성자 계정에만** allow override 1행을 같은 tx 안에서 넣는다. 공개 제품은 위
+        # 역할 backfill 이 생성자 역할까지 덮으므로 계정 override 를 추가하지 않는다
+        # (불필요한 override 는 이후 역할 단위 회수를 무력화한다 — 최소 권한).
+        if not default_role_access:
+            granted_account_id = int((account or {}).get("id") or 0)
+            if granted_account_id <= 0:
+                raise RuntimeError("creator account id unavailable for initial product grant")
+            _grant_product_access_to_account(conn, granted_account_id, new_permission_id)
+        # TASK-0073 Phase A5 + ITEM-03 (E-03d): same-tx audit hook (product create —
+        # after-state 만, before=None). 종전엔 별도 두 번째 트랜잭션이라 감사 실패가 이미
+        # commit 된 제품을 되돌릴 수 없었다 — 이제 제품·권한·grant·감사가 한 commit 이다.
         app._audit_admin_mutation(
             conn,
             request,
@@ -1345,15 +1506,29 @@ SELECT r.Id, %s FROM WebRoles r
         conn.commit()
         # feature-0028 (P1-B): 동적 권한(product.access.*) 변경 — 카탈로그 TTL 캐시 즉시 무효화.
         app.invalidate_permission_catalog_cache()
-    except Exception as audit_exc:
+    except Exception as exc:
         try:
             conn.rollback()
         except Exception:
             pass
+        try:
+            conn.autocommit = True
+        except Exception:
+            pass
         conn.close()
-        return app._json_error(f"audit write failed: {audit_exc}", 500)
+        # ITEM-03 / E-09b: 드라이버 메시지를 그대로 내지 않고 분류한다(SQL·컬럼 원문 미노출).
+        return _product_save_error(exc, fallback="제품 저장 실패")
+    finally:
+        try:
+            conn.autocommit = True
+        except Exception:
+            pass
     conn.close()
-    return JSONResponse({"ok": True, "product_id": new_id})
+    payload: dict[str, Any] = {"ok": True, "product_id": new_id}
+    if granted_account_id > 0:
+        # 운영자에게 「누가 초기 접근 권한을 받았는지」를 응답에서 바로 보여준다(고립 재발 진단축).
+        payload["initial_access_account_id"] = granted_account_id
+    return JSONResponse(payload)
 
 @router.patch("/api/admin/products/{product_id}")
 async def admin_update_product(product_id: int, request: Request) -> JSONResponse:
@@ -1399,6 +1574,28 @@ async def admin_update_product(product_id: int, request: Request) -> JSONRespons
 
         fields: list[str] = []
         params: list[Any] = []
+        # ITEM-03 / E-09b: PATCH 도 create 와 **같은 상한·같은 응답 형식**으로 먼저 판정한다.
+        # 한쪽만 검증하면 「생성은 막히는데 수정으로는 들어가는」 우회 경로가 남는다.
+        for _field, _label, _max in (
+            ("name", "표시 이름", app.PRODUCT_NAME_MAX),
+            ("description", "설명", app.PRODUCT_DESCRIPTION_MAX),
+        ):
+            if _field not in data:
+                continue
+            _len_error = _product_length_error(
+                _field, _label, str(data.get(_field) or "").strip(), _max
+            )
+            if _len_error is not None:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                try:
+                    conn.autocommit = True
+                except Exception:
+                    pass
+                conn.close()
+                return _len_error
         if "name" in data:
             fields.append("Name = %s")
             params.append(str(data.get("name") or "").strip())
@@ -1417,9 +1614,29 @@ async def admin_update_product(product_id: int, request: Request) -> JSONRespons
             params.append(1 if bool(data.get("is_default")) else 0)
             set_default = bool(data.get("is_default"))
         # TASK-0053: default_role_access 정책 토글도 admin update 에서 변경 가능 (기존 product 정책 변경).
+        # ITEM-03: create 와 **같은 엄격 파싱** — 한쪽만 좁히면 PATCH 로 문자열 `"false"` 를
+        # 보내 정책을 뒤집는 비대칭이 남는다.
         if "default_role_access" in data:
+            _dra_patch = data.get("default_role_access")
+            if not isinstance(_dra_patch, bool):
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                try:
+                    conn.autocommit = True
+                except Exception:
+                    pass
+                conn.close()
+                return JSONResponse(
+                    {
+                        "error": "접근 범위(default_role_access)는 true 또는 false 여야 합니다.",
+                        "field": "default_role_access",
+                    },
+                    status_code=400,
+                )
             fields.append("DefaultRoleAccess = %s")
-            params.append(1 if bool(data.get("default_role_access")) else 0)
+            params.append(1 if _dra_patch else 0)
 
         default_cleared_product_ids: list[int] = []
         if fields:
@@ -1473,7 +1690,8 @@ async def admin_update_product(product_id: int, request: Request) -> JSONRespons
         except Exception:
             pass
         conn.close()
-        return app._json_error(f"product update failed: {exc}", 500)
+        # ITEM-03 / E-09b: create 와 같은 분류기 — 드라이버 원문·SQL 단편 미노출.
+        return _product_save_error(exc, fallback="제품 저장 실패")
     finally:
         try:
             conn.autocommit = True
@@ -1594,9 +1812,15 @@ def admin_delete_product(product_id: int, request: Request) -> JSONResponse:
             conn.rollback()
         except Exception:
             pass
-        conn.autocommit = True
+        try:
+            conn.autocommit = True
+        except Exception:
+            pass
         conn.close()
-        return app._json_error(f"제품 삭제 실패: {exc}", 500)
+        # ITEM-03 (패널 security P2 — 범위 완결성): 제품 mutation 의 500 은 create·update 와
+        # **같은 분류기**를 쓴다. 여기만 남겨 두면 삭제 cascade 중의 드라이버 메시지(FK·락 대기·
+        # 다른 컬럼의 길이 초과)가 그대로 관리자 화면에 뜬다 — E-09b 와 동일 클래스다.
+        return _product_save_error(exc, fallback="제품 삭제 실패")
     finally:
         try:
             conn.autocommit = True
@@ -1708,7 +1932,11 @@ async def admin_update_product_databases(
         schema = str(item.get("schema_name") or "").strip()
         if not schema:
             continue
-        if len(schema) > 128 or re.search(r"""[\[\]'"`;\\.\x00-\x1f]""", schema):
+        # ITEM-03 (적대 검증 P2): DDL 은 `WebProductDatabases.SchemaName VARCHAR(64)` 인데
+        # 게이트가 128 이었다 — 65~128자는 앱을 통과하고 아래 DELETE 후 INSERT 루프에서
+        # 1406 으로 죽었다. 그 루프는 autocommit 상태라 **삭제는 이미 반영된 부분 쓰기**가
+        # 남는다. 상한을 DDL 과 일치시켜 그 입력이 애초에 도달하지 못하게 한다.
+        if len(schema) > _SCHEMA_NAME_MAX or re.search(r"""[\[\]'"`;\\.\x00-\x1f]""", schema):
             return app._json_error(f"invalid schema_name: {schema}", 400)
         slow = schema.lower()
         # re-gate BLOCKER4: 앱 내부 DB(agent_memory) 및 메타데이터 스키마는 allowlist 에 저장 불가
@@ -1724,9 +1952,17 @@ async def admin_update_product_databases(
         if slow in seen:
             continue
         seen.add(slow)
+        # ITEM-03 / E-09b: `WebProductDatabases.Description` 도 같은 DDL 상한(VARCHAR(255)) —
+        # 제품 설명과 같은 판정·같은 응답 형식을 쓴다(한쪽만 막으면 다른 표면으로 1406 이 돌아온다).
+        _db_desc = str(item.get("description") or "").strip()
+        _db_len_error = _product_length_error(
+            "description", "설명", _db_desc, app.PRODUCT_DESCRIPTION_MAX
+        )
+        if _db_len_error is not None:
+            return _db_len_error
         cleaned.append({
             "schema_name": schema,
-            "description": str(item.get("description") or "").strip(),
+            "description": _db_desc,
             "sort_order": int(item.get("sort_order") or (i + 1) * 10),
         })
     # ── FR-schema-name-case-drift (B, ingestion 정규화) ──────────────────────────

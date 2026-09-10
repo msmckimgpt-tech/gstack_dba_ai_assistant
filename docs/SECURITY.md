@@ -1160,6 +1160,23 @@ TASK-0300 (REQ-0287) privilege-escalation 가드는 *"본인이 보유하지 않
 수행한다. 통제 목적(비용 억제)은 **역할 단위 해제**로 달성하고, 자기 계정 override 는 통제 수단이 아니라
 예외 처리 수단으로만 쓴다.
 
+**생성 시점 불변식 — 「보유자 0인 동적 권한」을 만들지 않는다 (ITEM-03, 2026-09-10)**: 위 자기 잠금은
+*운영자의 조작*이 만든 상태지만, 같은 구조가 **생성 시점**에도 성립했다. 비공개 제품
+(`WebProducts.DefaultRoleAccess = 0`)은 동적 권한 코드 `product.access.<key>` 를 만들되 아무 주체에게도
+부여하지 않고 commit 됐고(근거 `docs/improvements/dqa-field-audit-20260910/EVIDENCE.md` E-03b), 그
+코드는 누구도 보유하지 않으므로 위 가드에 의해 **모든 부여 경로가 영구 403** 이 됐다(E-03c) — 즉 탈출구
+(a)(다른 관리자가 복구)조차 없는, DB 직접 수정 (b) 만 남는 상태다. 따라서 다음을 불변식으로 둔다:
+**보유자가 0인 동적 권한 코드를 생성하지 않는다.** `POST /api/admin/products` 는 코드 생성과 **같은
+트랜잭션에서** 공개면 역할 backfill, 비공개면 **생성자 계정 1건에 `allow` override 1행**을 넣으며,
+둘 중 정확히 하나가 항상 실행된다(어느 쪽도 실행되지 않는 경로는 없다). 감사행까지 같은 commit 이고
+어느 단계의 실패·영향 행 0 이면 전체 rollback 이다. 결정 근거·기각안(관리자 역할 우회)은
+`docs/DECISIONS.md` ADR-20260910T130000-private-product-initial-owner, 계약은
+`unit/feature-0003-agent-web-ui/docs/FUNCTION.md` AC-0634~0636.
+이 절의 가드 2곳(`_enforce_override_self_scope` · `_enforce_role_permission_self_scope`)은 **변경하지
+않았다** — 생성 시점 grant 가 완화의 필요를 없앤다. 이미 고립된 기존 제품은
+`bin/product-access-repair.sh` 로 진단하고 **운영자가 지정한 계정 1개**에만 복구한다(자동 선택 없음 ·
+명시 `deny` 는 뒤집지 않음 · 절차는 `unit/feature-0003-agent-web-ui/docs/RUNBOOK-product-access-repair.md`).
+
 ### 28.7 검증
 `unit/feature-0003-agent-web-ui/tests/test_model_access_rbac.py` (G1~G9, 26 케이스) — 판정표 5분기·
 부트스트랩 지연 fail-open+로그·`conn=None` 우회 차단·표시 필터·API 토큰 면제와 그 경계·**재부트스트랩

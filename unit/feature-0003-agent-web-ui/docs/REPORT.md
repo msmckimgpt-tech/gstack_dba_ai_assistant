@@ -8,6 +8,137 @@ source_of_truth: false
 
 # Current Report
 
+## TASK-20260910-item03-product-atomic-create — 비공개 Product 원자 생성 · 초기 접근 권한 · 고립 진단/복구 · Description 길이
+
+비공개 제품(`WebProducts.DefaultRoleAccess = 0`)을 만들면 동적 권한 코드
+`product.access.<key>` 는 생기지만 **어느 역할·계정에도 부여되지 않은 채 commit** 됐고, 부여
+경로 2곳이 「행위자가 보유한 코드만 부여」라 아무도 보유하지 않은 코드는 모든 부여 시도가
+403 이었다 — 생성 즉시 사용도 복구도 불가능한 제품이 남았다(EVIDENCE E-03b·E-03c, 라이브
+실측 Product 990002). 이번 cycle 은 그 생성 경로를 **하나의 트랜잭션**으로 닫고(제품 ·
+동적 권한 · 초기 grant · 감사행 = commit 1회), 이미 고립된 데이터를 위한 진단·복구 도구를
+붙이고, 같은 파일의 Description 길이 미검증(E-09b — `Data too long for column 'Description'`
+가 500 으로 노출)을 함께 해소했다.
+
+- **위험도 Critical** (§12.3 인가 데이터 생성 경로). **승인 근거**: 사용자 AskUserQuestion
+  2026-09-10 「3건 모두 승인」(Critical ITEM-01a·01b·03) + DESIGN ITEM-03. 승인 범위는
+  DESIGN ITEM-03 what 1~5 **그대로**이며, 그 밖의 인가 변경은 하지 않았다.
+- **하지 않은 것(승인 밖)**: `_enforce_override_self_scope`(`admin_accounts.py`) ·
+  `_enforce_role_permission_self_scope`(`admin_roles.py`) **무변경** — 두 파일은 diff 에
+  아예 없다. 관리자 계정명·역할 기반 우회 0. 다른 계정에 자동 grant 0. grant 는 생성자
+  계정 1행 INSERT 뿐이며 대상은 항상 `_require_account` 가 돌려준 인증 actor 의 id 다
+  (요청 body 로 지정할 수 없다).
+
+### 무엇이 바뀌었나
+
+1. **원자 생성** — `admin_create_product` 가 제품 INSERT → 동적 권한 INSERT →
+   (공개면 역할 backfill / 비공개면 생성자 계정 `allow` override 1행) → 감사행까지 한
+   트랜잭션에서 처리하고 **commit 1회**. 어느 단계의 예외든, 그리고 grant 의 **영향 행 0**
+   이든 전체 rollback. 종전에는 감사행이 별도 두 번째 트랜잭션이라 「생성」이 2 commit 이었고
+   감사 실패가 이미 commit 된 제품을 되돌릴 수 없었다(E-03d).
+   헬퍼 `_grant_product_access_to_account` 는 **INSERT 1행만** 한다 —
+   `_set_account_overrides` 의 DELETE-후-재삽입(전체 교체)을 상속하면 생성자의 기존
+   override 가 전멸하므로, 그 로직을 쓰지 않는다는 것을 AST 구조 테스트로 잠갔다.
+2. **Description/Name 길이** — DDL 정본 상수(`PRODUCT_DESCRIPTION_MAX=255` ·
+   `PRODUCT_NAME_MAX=128`)를 `_bootstrap_schema.py` 에 두고 create · patch ·
+   접근DB(`WebProductDatabases.Description`) 세 표면이 같은 상한·같은 400 응답 형식을 쓴다.
+   두 500 핸들러는 `_product_save_error` 로 교체 — 중복 키 409 · 길이 400 · 그 외 500
+   「제품 저장 실패」이며 드라이버 원문·SQL 조각은 서버 로그에만 남는다.
+3. **고립 진단/복구** — `scripts/product_access_repair.py` + `bin/product-access-repair.sh`.
+   기본은 읽기 전용 진단(SELECT 만), 복구는 `--apply --product <id> --grant-account <id>` 로
+   **운영자가 지정한 계정 1개**에만 allow 1행. 자동 선택 없음 · 명시 `deny` 미역전 · 멱등 ·
+   적용 후 재진단으로 결과 대조. 절차는 `docs/RUNBOOK-product-access-repair.md`.
+4. **관리 콘솔** — 상세의 이름·설명 input 에 `maxLength` + 남은 글자 카운터, 생성 흐름에
+   설명 입력과 접근 범위(공개/비공개) 선택(인식 못한 답은 임의 해석하지 않고 재질문),
+   일괄 적용 실패 토스트가 첫 실패 사유를 표시(실패분은 pending 에 남아 입력 보존).
+
+### 실측이 잡은 것 (테스트가 통과하는 동안 숨어 있던 것)
+
+- ⭐ **진단 도구의 기본 모수가 자기 목적을 배제**하고 있었다. 초기 구현은 「활성 제품만」이
+  기본이었는데, 라이브 dry-run 을 돌리자 기본 실행이 **「고립 Product 없음」**을 냈다 —
+  요구서가 지목한 990002 가 비활성이기 때문이다. 단위 테스트는 그 배제를 *의도된 동작*으로
+  고정해 전부 통과하고 있었다. 기본을 **전부**로 뒤집고(`--active-only` 로만 좁힘) 테스트
+  방향도 반대로 고쳤다(§16.7 G12). 뒤집은 뒤 라이브 기본 실행이 990002 를 정확히 지목한다.
+- **jsdom 하네스의 조용한 SyntaxError.** 공용 ESM 제거기(`tests/esm-classic-inject.mjs`)가
+  재export-from(`export { a } from "./x.js";`)을 지우지 않아 그 줄이 남은 classic 스크립트
+  전체가 죽었고, jsdom 이 그 오류를 throw 하지 않아 증상이 «심볼이 undefined» 로 위장됐다.
+  제거 규칙을 보강하고 하네스가 realm 스크립트 오류 0건을 단언하게 했다.
+
+### 이번 changeset 이 남의 파일을 건드린 이유 (1줄씩)
+
+- `tests/esm-classic-inject.mjs` — 내 jsdom 행위 하네스가 이 공용 제거기를 쓰는데, 재export-from
+  미처리로 주입 스크립트가 조용히 죽었다. 같은 helper 를 쓰는 다른 하네스 11개를 재실행해 회귀 0 확인.
+- `tests/test_web_perf_p1.py` — 이 파일의 `test_product_crud_invalidates_catalog_cache` 가
+  `admin_products.py` 의 캐시 무효화 호출을 **파일 전체 개수(>=4)** 로 세고 있었고, 그 4 는
+  create 가 2번 commit 하던 구조의 산물이라 감사행을 같은 tx 로 합치자 3 이 되어 깨졌다.
+  개수 대신 **핸들러별 존재 여부(AST)** 로 바꿨다(원래 의도에 더 가깝고 편중에도 걸린다).
+- `docs/STATUS.md` — `bin/gen-status.sh` 로 재생성(§16.1). 그 출력에서
+  feature-0046 행의 요지가 비었는데, 그 feature 의 `TASK.md` frontmatter 에
+  `feature_status_note` 가 없어서다(생성기의 source of truth). 내가 임의로 채우지 않았다 —
+  원장 소유 feature 가 채울 항목이다.
+
+### 남은 리스크·후속
+
+- **AC-03-6(실 DQA 클라이언트 Run)은 `NOT-RUN`.** 이 변경이 아직 배포되지 않았고 실
+  클라이언트는 사용자 Windows 머신에 있다. 사유·대체 검증(Node 33축 + CLI)·후속 조건을
+  `docs/test-runs.d/TASK-20260910-item03.md` 에 남겼고 **PASS 로 승격하지 않았다**.
+- **라이브 DB 복구(`--apply`) 미수행.** 990002 의 대상 계정 지정은 운영자 결정이다.
+  진단만 라이브에서 돌렸고 쓰기 0행(감사 0 · override 0)을 DB 직접 조회로 확인했다.
+- **같은 라우터의 예외-문자열 노출 잔여 9곳**(`audit write failed: {exc}` 계열 8 + LLM 502 1)은
+  ITEM-03 승인 범위 밖의 다른 family 라 그대로 뒀다. 대신 그 **모수 9를 구조 테스트로 고정**해
+  클래스가 조용히 늘어나지 못하게 했고, FUNCTION.md AC-0639 에 보장 범위를 정직하게 한정했다.
+  잔여 해소는 후속 항목.
+- **접근DB 갱신 핸들러의 DELETE→INSERT 루프는 트랜잭션 밖**이다(autocommit). 이번에는 그
+  루프에 도달하는 과길이 입력을 상한 정합(64)으로 막았지만, 루프 자체의 원자화는 ITEM-03 이
+  건드리지 않은 구조라 후속 항목으로 남긴다.
+- **`bin/verify-completion.sh` check #13 의 `visual_verification_scope: always` 는 현재
+  «hard gate» 가 아니다** (적대 검증 qa 가 함수를 직접 돌려 실증). 잘 쓴
+  `Environment: DQA-client / Result: NOT-RUN / Reason:` fragment 는 `pending` 으로 분류되고,
+  그 분기는 `missing` 이 비었으므로 `scope=always` FAIL 분기 **앞에서 return 0** 한다 →
+  실질 semantics 는 「사유 없으면 경고」다. 이번 ITEM 의 기록은 §15.4.1 에 정합하지만(PASS 로
+  읽히지 않고 실제 사유가 있다), **게이트 강도가 선언과 다르다**는 사실은 공유 스크립트
+  소유자·오케스트레이터가 알아야 한다. 이 세션은 공유 게이트 스크립트를 수정하지 않았다.
+- **적대 검증 창 동안 파일이 계속 바뀌었다** (qa 패널 P2). 4 패널을 순차 dispatch 하는 동안
+  P1·P2 수정이 같은 파일에 들어갔고, qa 는 중간 상태 2건(일시적 `NameError`,
+  operator/target 계정 aliasing 회귀)을 목격했다. 최종 상태는 **모든 수정 후 전건 재실행**으로
+  확정했다(아래 Git 동기화 결과의 커밋이 그 상태다). 다음 cycle 에서는 패널 dispatch 전에
+  diff 를 커밋으로 고정하는 것이 낫다.
+- **항상 보이는 글자 수 카운터**: feature AGENTS §8.1 의 「부가 정보는 조건부 표시」는 대화
+  화면 레이아웃 절에 있고 관리 콘솔 §10 에는 대응 규칙이 없다. 적대 검증이 이 긴장을 지적했다 —
+  상한 근처에서만 노출할지는 CONVENTIONS 가 정할 사안으로 남긴다(현재는 항상 표시).
+- 생성자 계정이 비활성·삭제되면 그 제품은 다시 고립될 수 있다. 정상 대응은 복구 스크립트이며
+  계정 삭제 시 자동 이관은 이번 결정 범위 밖이다(ADR Consequences 에 후속 후보로 기록).
+### BLOCKED: awaiting-human-approval — 제품 생성의 §10.7(pending → 「모두 적용」) 정합화
+
+- **지적(적대 검증 ux, P1)**: `startNewProduct` 은 즉시 `apiFetch(POST)` 로 제품을 만든다.
+  이번 변경이 그 흐름에 **접근 범위(공개/비공개)** 라는 인가 결정을 추가했으므로,
+  `docs/CONVENTIONS.md` §10.7 의 「보안 경계 mutation 은 예외 없음(pending → 모두 적용)」에
+  정면으로 걸린다. 리뷰어는 같은 콘솔의 `roles.js::startNewRole` 이 **엔티티 생성**을 이미
+  `adminState.pending.newRoles` 로 스테이징한다는 선례를 제시했다 — 「생성은 원래 즉시였다」는
+  내 해명은 그 선례 앞에서 성립하지 않는다.
+- **반론(기록만, 기각 아님)**: 이번 변경 **이전**의 `startNewProduct` 는 항상
+  `default_role_access=true` 로 만들어 **모든 역할에 자동 grant** 하는 즉시 인가 mutation 이었다.
+  이번 변경은 그 같은 흐름에 «최소 권한(생성자 1인)» 선택지를 **추가**했으므로, 즉시-쓰기의
+  폭발 반경은 커지지 않고 **줄어든다**. 그래도 §10.7 위배 사실 자체가 해소되는 것은 아니다.
+- **왜 이 세션이 고치지 않았나**: 두 해소 경로 모두 승인 범위(DESIGN ITEM-03 what 1~5) 밖이다.
+  ① 생성을 pending 으로 전환 = 콘솔 생성 흐름의 아키텍처 변경(신규 pending 스토어·초안 상세
+  pane·`applyAllPending`·카운트·취소 경로) — ITEM-03 의 what-5 는 「그 흐름에 필드 추가」다.
+  ② §10.7 의 영구 예외 선언 = 프로젝트 컨벤션 개정(ADR) — AI 자율 판단 범위가 아니다.
+  AGENTS §12.1 대로 여기 `BLOCKED` 로 남기고 나머지를 완료했다.
+- **이 세션이 대신 한 것**(마찰·오조작 축은 승인 범위 안에서 해소): 어느 단계 취소든 입력
+  초안 보존 · 확정 직전 요약 confirm(되돌릴 수 없음 명시) · 접근 범위 답 어휘 확장(오독 없이
+  마찰만 감소) · 인식 못한 답은 재질문 유지.
+- **사람 결정 필요**: ①로 갈지 ②로 갈지. ① 이면 후속 ITEM 으로 분리하고, ② 이면
+  `docs/CONVENTIONS.md` §10.7 에 예외와 근거를 ADR 로 기록해야 한다.
+
+### Git 동기화 결과
+
+- 커밋: (아래 커밋 해시 — 이 문서가 그 커밋에 포함된다) `ai/claude-corp/feature-0003-product-atomic-create`
+- verify-completion: **PASS** (재시도 1회 — 1차는 check #9 REVIEW 엔트리 부재로 FAIL, 패널 종료 후 PASS)
+- Push: 완료 (`origin ai/claude-corp/feature-0003-product-atomic-create`)
+- main 병합: 로컬 `git merge --no-edit origin/main` 로 최신 main 통합 후 push (PR·머지는 오케스트레이터)
+- 충돌 해결: 없음
+- PR·머지·배포: **수행하지 않음** — 오케스트레이터 담당(위임 범위 밖).
+
 ## TASK-20260909T163000-attach-csv-table — 첨부 CSV 를 표로 출력
 
 첨부 `.csv`/`.tsv` 를 «문서 원문» 모달에서 **격자**로 보여 준다. 종전에는 줄번호 + 평문 표에

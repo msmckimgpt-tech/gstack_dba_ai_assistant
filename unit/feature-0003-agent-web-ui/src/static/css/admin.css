@@ -882,6 +882,27 @@
   margin: 4px 0 6px;
 }
 
+/* ITEM-03 (DQA-09 설명 길이): 텍스트 입력의 글자 수 카운터.
+   ⚠️ 셀렉터 특이도 주의 — 이 요소는 `<label class="field admin-detail-field">` 의 직속
+   `<span>` 이라 `base.css` 의 `.field > span`(0-1-1: bold + --text-2)이 함께 매칭된다.
+   단일 클래스(`.admin-char-counter`, 0-1-0)로 쓰면 **파일에 규칙이 있어도 색·굵기가 적용되지
+   않고** 필드 캡션과 똑같이 굵게 렌더된다(적대 검증 실측). 그래서 `label.field >` 를 붙여
+   특이도를 0-2-1 로 올린다. 선언 순서로는 해결되지 않는다.
+   상한 도달은 «오류» 가 아니다 — `maxlength` 가 초과 입력을 이미 막으므로 그 값은 정상
+   저장된다. 따라서 --danger 가 아니라 --warning(용량 도달)을 쓴다. */
+label.field > .admin-char-counter {
+  font-size: 12px;
+  font-weight: 400;
+  /* `--muted` 는 이 프로젝트에 **정의되지 않은** 이름이다(주변 규칙들이 fallback hex 로
+     조용히 떨어져 있다). 신규 규칙은 실제 토큰을 쓴다 — 그래야 테마 전환을 따라간다. */
+  color: var(--text-muted, #807d72);
+  margin: 2px 0 6px;
+  text-align: right;
+}
+label.field > .admin-char-counter.is-limit {
+  color: var(--warning, #d97706);
+}
+
 /* 멀티 datasource (P2): 연결테스트 결과 표시 */
 .admin-ds-test-result {
   font-size: 12px;

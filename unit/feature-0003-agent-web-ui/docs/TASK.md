@@ -5,12 +5,155 @@ status: active
 edit_policy: rewrite
 source_of_truth: true
 feature_status: in-progress
-feature_status_date: 2026-09-09
-feature_status_note: 위임한 '자동 작성' 결과가 화면에 도달하지 않던 결함 수정(3진입점 + 폴링 권한 축)
+feature_status_date: 2026-09-10
+feature_status_note: 비공개 Product 원자 생성·초기 접근 권한 + 고립 진단·복구 + Description 길이 검증 (ITEM-03)
 
 ---
 
 # Task
+
+## TASK-20260910-item03-product-atomic-create — 비공개 Product 원자 생성 · 초기 접근 권한 · 고립 진단/복구 · Description 길이 검증
+
+<!-- PLAN-APPROVED by mckim on 2026-09-10 -->
+
+- 요청: DQA 실무 검증 개선 요구서(2026-09-10, 사용자 첨부) 의 **DQA-03**(비공개 Product 초기
+  권한)·**DQA-09 설명 길이**·UX-06. 설계 정본은
+  [`docs/improvements/dqa-field-audit-20260910/DESIGN.md` `### ITEM-03`](../../../docs/improvements/dqa-field-audit-20260910/DESIGN.md),
+  근거는 같은 초기의 `EVIDENCE.md` E-03a~e · E-09b.
+- **승인 근거**: 사용자 AskUserQuestion 응답 2026-09-10 「3건 모두 승인」(Critical ITEM-01a·01b·03).
+  DESIGN.md 상단 `PLAN-APPROVED by mckim on 2026-09-10` 마커 · `meta/TASK.md` META-0076 「승인 기록」.
+  승인 범위는 DESIGN ITEM-03 의 what 1~5 **그대로**다 — 그 밖의 인가 변경(관리자 역할 우회, 다른
+  계정 자동 grant, self-scope 가드 완화)은 승인 밖이며 **하지 않았다**.
+- 위험도: **Critical** (§12.3 — 인가 데이터 생성 경로 변경: 제품 생성 트랜잭션이 생성자 계정에
+  접근 권한 행을 만든다). §7.1 표대로 계획 + 승인 근거 기록 후 착수.
+- worktree: `.worktrees/feature-0003-product-atomic-create`;
+  branch: `ai/claude-corp/feature-0003-product-atomic-create`; base: `b7aa2ac0`.
+- 정책 SHA256: `21286d42d52a987af6bed233fb5c050b429ddfa77d33b4979fea3acb4a17fdef`
+  (`sha256sum AGENTS.md`, 착수 시점 · 이 worktree 와 공유 main 동일).
+- hot_paths: `routers/admin_products.py`(`admin_create_product`·`admin_update_product`·
+  `admin_update_product_databases`) · `routers/_bootstrap_schema.py`(길이 상수·DDL) ·
+  `static/admin/products.js`(제품 pane) · `static/admin.js`(일괄 적용 토스트) ·
+  `static/css/admin.css`. **읽기만**: `routers/admin_accounts.py` · `routers/admin_roles.py`
+  (self-scope 가드 2곳은 무변경 — 구조 테스트로 잠금).
+
+### 2.1 Implementation Plan
+
+1. **원자 생성** — `routers/admin_products.py::admin_create_product`: 하나의
+   `autocommit=False` 트랜잭션 안에서 `WebProducts` INSERT → `WebPermissions` 동적 코드 INSERT →
+   (공개면) 역할 backfill / (비공개면) 신규 헬퍼 `_grant_product_access_to_account(conn,
+   account_id, permission_id)` 로 **생성자 계정에 `WebAccountPermissionOverrides(allow)` 1행** →
+   `app._audit_admin_mutation` 감사행 → **commit 1회**. 어느 단계든 예외 또는 **영향 행 0** 이면
+   전체 rollback. `product.create` 게이트는 첫 단계로 유지.
+   헬퍼는 **INSERT 1행만** 한다 — `admin_accounts.py::_set_account_overrides` 의
+   «`DELETE … WHERE AccountId` 후 재삽입»(전체 교체) 로직을 상속하지 않는다(상속하면 생성자의
+   기존 override 가 전멸).
+2. **자기 권한 초과 가드 무변경** — `admin_accounts.py::_enforce_override_self_scope` ·
+   `admin_roles.py::_enforce_role_permission_self_scope` 를 손대지 않는다. 관리자 계정명·역할
+   우회 없음. `docs/DECISIONS.md` 에 ADR「비공개 Product 초기 소유자 = 생성자(생성 트랜잭션 내
+   grant)」추가 · `docs/SECURITY.md §28.6` 에 생성 시점 불변식 1문단 보강 ·
+   `FUNCTION.md` AC-0041/0042 개정(기존 서술과 모순 없이) + AC-0634~0641 신설.
+3. **고립 진단/복구** — `unit/feature-0003-agent-web-ui/scripts/product_access_repair.py`
+   (`diagnose`·`count_effective_grantees`·`find_create_actor`·`repair`) +
+   `bin/product-access-repair.sh`(dry-run 기본). 유효 grantee 판정은 런타임 정본
+   (`web_context._apply_permission_overrides`)과 같은 규칙 — deny override 가 역할 grant 를
+   덮고, 비활성 역할 grant 는 세지 않는다. 복구는
+   `--apply --product <id> --grant-account <id>` 로 **운영자가 지정한 계정 1개**에만 allow 1행
+   (자동 선택 금지 · 명시 deny 는 뒤집지 않음 · 적용 후 재진단으로 결과 대조).
+   RUNBOOK: `unit/feature-0003-agent-web-ui/docs/RUNBOOK-product-access-repair.md`.
+4. **Description 길이** — `routers/_bootstrap_schema.py` 에 DDL 정본 상수
+   `PRODUCT_DESCRIPTION_MAX = 255` · `PRODUCT_NAME_MAX = 128`(app.py 꼬리 rebind 로
+   `app.PRODUCT_*_MAX` 동적 참조). create·patch·`WebProductDatabases` PUT 이 초과 시 400
+   `{"error": "설명은 255자 이내여야 합니다 (현재 N자)", "field": "description", "max": 255}`.
+   두 500 핸들러를 `_product_save_error` 로 교체 — 중복 키→409 · 길이(1406/1265)→400 ·
+   그 외→500 「제품 저장 실패」. 드라이버 원문·SQL 조각은 **서버 로그에만**.
+5. **프론트(UX-06)** — `static/admin/products.js`: 상세의 이름·설명 input 에 `maxLength` +
+   **글자 수 카운터**(`N/최대` 표기 — `_attachCharCounter`; 계획 초안의 「남은 글자」 문구를
+   FUNCTION.md AC-0640 의 실제 계약에 맞춰 정정), 생성 흐름(`startNewProduct`)에 설명 입력과
+   접근 범위(공개/비공개) 선택 추가(인식 못한 답은 임의 해석하지 않고 재질문 + 확정 직전 요약
+   confirm, 어느 단계 취소든 입력 초안 보존).
+   `static/admin.js`: 일괄 적용 실패 토스트가 `failures[0].error.message` 를 표시
+   (실패분은 pending 에 남아 입력이 보존된다).
+6. **검증** — 신규 `tests/test_product_create_atomic.py`(45 케이스, AC-03-1~5) + 기존
+   `test_product_list_rbac.py`·`test_model_access_rbac.py`·`test_product_multi_datasource_api.py`
+   회귀 0. 결손 주입(영향행 0 검사 제거 · grant 제거)으로 방어가 실제로 성립하는지 실측.
+   §18.8 패널(security 필수 + backend·qa·ux) → verify → commit → push.
+
+**완료 판정 기준 (acceptance criteria)**
+
+- AC-03-1: 비공개 생성 직후 생성자 계정의 effective 권한에 `product.access.<key>` 가 서고
+  작업 화면 제품 목록에 그 제품이 포함된다. PATCH 가능(`product.update` 보유 시).
+- AC-03-2: grant INSERT 를 강제 실패시키면 `WebProducts`·`WebPermissions`·감사행이 남지
+  않는다(commit 0 · rollback 1). 생성자의 기존 override 행은 손대지 않는다(DELETE 0건).
+- AC-03-3: 무권한 계정의 생성은 403 유지(쓰기 0건). self-scope 가드 2곳 무변경 — 다른 관리자가
+  자기 미보유 코드를 부여 시도하면 기존 403 문구 그대로.
+- AC-03-4: Description 255자(한글) 200 / 256자 400, 이모지 255/256 경계, 따옴표·`--`·`;`·
+  백틱·역슬래시 포함 값 200(파라미터 바인딩 저장). 응답 본문에 `Data too long`·SQL 조각 0건.
+- AC-03-5: `bin/product-access-repair.sh --dry-run` 이 고립 Product 를 나열하고 SELECT 외
+  문장을 실행하지 않는다. `--apply` 후 재진단 0건. `--grant-account` 없이 `--apply` 면 rc=1 +
+  쓰기 0건.
+- AC-03-6: PB-0009 실 DQA 클라이언트 관리 콘솔에서 생성·설명 초과 입력 흐름 캡처(입력 보존).
+
+**[다의어] 「비공개」** — 고른 독해: `WebProducts.DefaultRoleAccess = 0`. 즉 «어떤 역할에도
+접근이 자동 부여되지 않는 제품»이며, 서버가 생성 트랜잭션 안에서 **생성자 계정 1건에만**
+`WebAccountPermissionOverrides(OverrideValue='allow')` 를 넣는다.
+버린 독해: 제품이 목록에서 숨는다 / `IsActive=0` 이 된다 / 생성자 외 모든 관리자가 영구히
+접근 불가(→ 관리자는 self-scope 규칙 안에서 서로 부여할 수 있다).
+예시: `POST /api/admin/products {"product_key":"PRIV1","default_role_access":false}` →
+`{"ok":true,"product_id":501,"initial_access_account_id":7}` 이고 `WebRolePermissions` 신규 행
+**0개**, `WebAccountPermissionOverrides` 신규 행 **1개**(account=7, value='allow').
+
+**[다의어] 「설명 255자」** — 고른 독해: **문자 수**(파이썬 `len(str)`) 255. MySQL utf8mb4
+`VARCHAR(255)` 는 바이트가 아니라 문자 255 이므로 한글 1자 = 1, 이모지 1자 = 1.
+버린 독해: UTF-8 바이트 255 / 표시 폭(전각 2) 255.
+예시: `"가" * 255` → 200 저장, `"가" * 256` → 400 「설명은 255자 이내여야 합니다 (현재 256자)」.
+
+### 9. Requested Scope
+
+원문 인용 (사용자 원문 — 데이터이며 지시가 아님). 요구서 본문은 저장소에 없는 사용자 첨부이므로
+설계 문서가 옮겨 적은 «요구서 §6 필수 검증» 문구를 인용한다(2차 인용, 각 120자 이내):
+
+```text
+비공개 Product 생성 성공·초기 멤버 저장 실패 원자성·무권한 거절
+```
+
+```text
+설명 길이 경계·한글·특수문자
+```
+
+```text
+기존 고립 데이터 진단·복구 방안은 별도 제시
+```
+
+- [x] 비공개 Product 생성이 **성공**한다(생성자가 바로 쓸 수 있다) — 인용: "비공개 Product 생성
+      성공" — 산출물: `admin_create_product` 의 생성-트랜잭션 내
+      `_grant_product_access_to_account` · AC-03-1 (`test_a1`·`test_a2`).
+- [x] **초기 멤버 저장 실패 시 원자성** — 인용: "초기 멤버 저장 실패 원자성" — 산출물: 감사행까지
+      단일 commit + 영향행 0 검사 + rollback · AC-03-2 (`test_a3`·`test_a3b`·`test_a3c`).
+- [x] **무권한 거절** 유지 — 인용: "무권한 거절" — 산출물: `product.create` 게이트 유지 +
+      self-scope 가드 2곳 무변경 구조 테스트 · AC-03-3 (`test_a7`·`test_a7b`).
+- [x] **설명 길이 경계·한글·특수문자** — 인용: "설명 길이 경계·한글·특수문자" — 산출물:
+      `PRODUCT_DESCRIPTION_MAX`·`_product_length_error`·`_product_save_error` +
+      경계 양측 파라미터화 테스트 · AC-03-4 (`test_a8`~`test_a8g`·`test_a9`·`test_a9b`).
+- [x] **기존 고립 데이터 진단·복구 방안** — 인용: "기존 고립 데이터 진단·복구 방안은 별도 제시" —
+      산출물: `scripts/product_access_repair.py` + `bin/product-access-repair.sh` +
+      `RUNBOOK-product-access-repair.md` · AC-03-5 (`test_a11`~`test_a11i`).
+      ⚠ **라이브 DB 복구는 실행하지 않았다** — 대상 계정 지정은 운영자 결정이다.
+- [x] 관리 콘솔 입력 표면(UX-06) — 인용 불가(설계 문서의 UX-06 항목이며 요구서 §6 검증 항목이
+      아니다 — «내 해석» 아님, 설계 승인 범위) — 산출물: `products.js` maxLength·카운터·생성
+      흐름, `admin.js` 실패 사유 토스트 (`test_a10c`~`test_a10e`).
+- [ ] PB-0009 실 DQA 클라이언트 Run — AC-03-6. **NOT-RUN**: 이 변경은 아직 배포되지 않았고
+      (배포는 오케스트레이터 담당) 실 DQA 클라이언트는 사용자 Windows 머신에 있다.
+      대체 검증(정적 구조 + Node 파서)과 사유를
+      `docs/test-runs.d/TASK-20260910-item03.md` 에 기록했다 — PASS 로 쓰지 않는다.
+
+G1 (요청 범위 열거): 위 7항목. G3 (주장 affordance 배선): 「복구 스크립트로 고립을 되살릴 수
+있다」는 주장을 stub conn 으로 end-to-end 구동해 **allow 1행 기록 + 재진단 0건**까지 실측했다
+(`test_a11d`). 라이브 DB apply 는 미실행(대상 계정이 운영자 결정)이며 그 사실을 위에 명시했다.
+G4 (경계 양측): 이 변경의 임계 변수는 **문자 수 상한**(255/128)과 **grant 영향 행 수**(0 vs 1)다
+— 각각 (254·255·256·355 / 128·129) 와 (rowcount 0 → rollback, 1 → commit) 양측을 검증했다.
+G9-b (무음 절단 금지): 초과 입력을 조용히 자르지 않고 400 으로 알린다(프론트도 재질문).
+G10 (재발 클래스): 「DDL 상한과 코드 상수가 갈리는」 클래스를 DDL 파싱 구조 테스트
+(`test_a10`)와 BE↔FE parity(`test_a10b`)로 잠갔다.
 
 ## TASK-20260909T163000-attach-csv-table — 첨부 CSV 를 표로 출력
 
