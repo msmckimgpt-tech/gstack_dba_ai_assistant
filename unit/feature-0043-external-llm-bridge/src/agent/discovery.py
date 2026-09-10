@@ -10,7 +10,7 @@ import json
 import re
 
 from .logs import _log
-from .runtimes import _CLI_ADAPTERS, _RUNTIME_SPECS, _WIN_EXEC_EXTS, _WIN_KNOWN_EXTS
+from .runtimes import _CLI_ADAPTERS, _RUNTIME_SPECS, _WIN_EXEC_EXTS, _WIN_KNOWN_EXTS, client_runtime_selection
 
 def _exec_exts() -> list[str]:
     """이 OS 에서 실행 파일 이름에 붙을 수 있는 확장자. POSIX 는 `[""]`.
@@ -200,35 +200,6 @@ def _is_wsl_path(exe: str) -> bool:
     """Windows 에서 **POSIX 절대경로**면 그것은 WSL 안의 것이다."""
     return os.name == "nt" and isinstance(exe, str) and exe.startswith("/")
 
-
-def client_runtime_selection() -> dict | None:
-    """클라이언트가 확인한 위치만 사용한다. 손상된 선택 파일은 자동 탐색으로 우회하지 않는다."""
-    filename = os.environ.get("BRIDGE_RUNTIME_SELECTION")
-    if not filename:
-        return None
-    try:
-        with open(filename, encoding="utf-8") as stream:
-            raw = json.loads(stream.read(262145))
-        if not isinstance(raw, dict):
-            return {}
-        selected = {}
-        for name, row in raw.items():
-            if name not in _known_ai_names() or not isinstance(row, dict):
-                return {}
-            if row.get("where") not in ("windows", "wsl") or not row.get("path"):
-                return {}
-            for key in ("path", "distro", "user"):
-                value = row.get(key, "")
-                if not isinstance(value, str) or len(value) > 4096 or any(ord(c) < 32 for c in value):
-                    return {}
-            selection_id = row.get("selection_id")
-            if selection_id is not None and (not isinstance(selection_id, str)
-                                              or not re.fullmatch(r"[0-9a-f]{32}", selection_id)):
-                return {}
-            selected[name] = row
-        return selected
-    except (OSError, ValueError):
-        return {}
 
 
 def _which_ai(name: str) -> str | None:

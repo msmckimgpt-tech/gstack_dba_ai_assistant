@@ -5262,3 +5262,21 @@ LLM 에게 자기소개를 시키던 축 전체가 이 한 줄로 대체됐다 �
 - Verdict: PASS
 - Evidence: test-runs.d/20260910-effort-contract.md, PR #1675, deploy exit0, 설치 full hash/heartbeat/보정 캐시 일치.
 - Human Approval Needed: no
+
+## REV-20260910T080000-model-switch-backend [SUBAGENT:backend] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260910-model-switch
+- Trigger: runtime/런타임 라우팅 · concurrent state/병렬 상태 · model contract/모델 계약
+- Timestamp: 2026-09-10T08:02:17+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260910T080000-model-switch-backend.md
+- Human Approval Needed: no
+- 승인 근거: 현재 사용자 수정 요청 및 wrapper FIRST_REQUEST deploy_scope included, AGENTS §16.5.1. 인증·인가 정책 및 데이터 변경 없음.
+
+## REV-20260910T080000-model-switch-qa [SUBAGENT:qa] — PASS
+- Related TASK: feature-0043-external-llm-bridge / TASK-20260910-model-switch
+- Trigger: runtime/런타임 라우팅 · concurrent state/병렬 상태 · model contract/모델 계약
+- Timestamp: 2026-09-10T08:02:17+00:00
+- Verdict: PASS
+- Artifact: unit/feature-0043-external-llm-bridge/docs/reviews/20260910T080000-model-switch-qa.md
+- Human Approval Needed: no
+- 승인 근거: 현재 사용자 수정 요청 및 wrapper FIRST_REQUEST deploy_scope included, AGENTS §16.5.1. 인증·인가 정책 및 데이터 변경 없음.

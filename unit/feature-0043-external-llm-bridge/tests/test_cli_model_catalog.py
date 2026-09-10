@@ -188,7 +188,7 @@ def test_a_catalog_failure_does_not_mask_the_real_reason(ba, monkeypatch):
 
     monkeypatch.setattr(ba, "_ask_json", _boom)
     seen: list = []
-    monkeypatch.setattr(ba, "note_ai_unusable", lambda msg: seen.append(str(msg)))
+    monkeypatch.setattr(ba, "note_ai_unusable", lambda msg, **kwargs: seen.append(str(msg)))
     ba.detect_runtimes(only="codex", cached=None, probe=True)
     assert seen, "실패를 사용자 축으로 알리지 않았다"
     assert "OAuth access token has expired" in seen[-1], (

@@ -104,7 +104,7 @@ def test_consecutive_failures_mark_unusable(mod):
 
 def test_success_heals_immediately(mod):
     """⭐ 성공 한 번이면 **즉시** 복귀한다 — 영구 잠김이 없다(자기 치유)."""
-    mod.note_ai_unusable("응답 없음")
+    mod.note_ai_unusable("응답 없음", runtime="claude")
     assert mod.ai_health()[0] is False
     mod.note_ai_outcome(True)
     assert mod.ai_health() == (True, ""), "복구됐는데도 계속 막으면 사용자에게 거짓이다"
@@ -141,7 +141,7 @@ def test_unhealthy_runner_answers_immediately_without_calling_the_ai(
                         lambda *a, **k: spawned.append(a) or (True, "안 불려야 한다"))
     monkeypatch.setattr(mod, "schedule_health_recheck", lambda *a, **k: True)
     monkeypatch.setattr(mod, "_child_workdir", lambda: str(tmp_path))
-    mod.note_ai_unusable("이 컴퓨터의 claude 가 응답하지 않습니다")
+    mod.note_ai_unusable("이 컴퓨터의 claude 가 응답하지 않습니다", runtime="claude")
 
     t0 = time.monotonic()
     ok, msg = mod.ask_local_ai("claude", ["claude", "-p", "{prompt}"], "질문", None)
@@ -162,7 +162,7 @@ def test_fast_fail_schedules_background_recovery(mod, monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "schedule_health_recheck",
                         lambda *a, **k: called.append(a) or True)
     monkeypatch.setattr(mod, "_child_workdir", lambda: str(tmp_path))
-    mod.note_ai_unusable("응답 없음")
+    mod.note_ai_unusable("응답 없음", runtime="claude")
     mod.ask_local_ai("claude", ["claude", "-p", "{prompt}"], "질문", None)
     assert called, "회복 확인을 걸지 않았다 — 복구돼도 영원히 막힌다"
 
@@ -175,7 +175,7 @@ def test_recovery_recheck_runs_in_background_and_heals(mod, monkeypatch):
     monkeypatch.setattr(mod, "_ask_json", lambda *a, **k: {
         "label": "Claude", "models": [{"value": "opus", "label": "Opus"}],
         "model_flag": ["--model", "{model}"], "efforts": [], "effort_flag": []})
-    mod.note_ai_unusable("응답 없음")
+    mod.note_ai_unusable("응답 없음", runtime="claude")
     assert mod.schedule_health_recheck("claude") is True
 
     for _ in range(200):                     # 배경 스레드가 끝날 때까지
@@ -215,7 +215,7 @@ def test_heartbeat_carries_ai_health(mod, monkeypatch):
     # ⚠ `heartbeat` 는 `call`(도구 경로)이 아니라 `_post` 로 나간다 — 그 seam 을 잡아야 한다.
     monkeypatch.setattr(api, "_post", lambda path, payload=None, timeout=60.0:
                         (sent.update(payload or {}), {})[1])
-    mod.note_ai_unusable("이 컴퓨터의 claude 가 응답하지 않습니다")
+    mod.note_ai_unusable("이 컴퓨터의 claude 가 응답하지 않습니다", runtime="claude")
     api.heartbeat([])
 
     assert sent.get("ai_ready") is False, f"AI 불가가 신고되지 않았다: {sent}"
@@ -291,7 +291,7 @@ def test_successful_call_actually_heals_the_runner(mod, monkeypatch, tmp_path):
     """
     say = tmp_path / "ok.py"
     say.write_text("import sys; sys.stdout.write('답변입니다')", encoding="utf-8")
-    mod.note_ai_unusable("응답 없음")
+    mod.note_ai_unusable("응답 없음", runtime="claude")
     assert mod.ai_health()[0] is False, "전제: 아픈 상태로 시작"
 
     # ⚠ `ask_local_ai` 가 아니라 **실행 계층**을 직접 부른다 (TASK-20260903T160000).

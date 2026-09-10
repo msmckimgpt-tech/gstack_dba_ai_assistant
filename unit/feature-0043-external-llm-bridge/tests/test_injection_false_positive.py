@@ -163,7 +163,7 @@ def test_child_process_receives_the_token_via_environment(monkeypatch, tmp_path)
     seen: dict = {}
 
     # `stdin_text` 는 명령줄 상한 폴백에서 생긴 인자 (TASK-20260902T140000).
-    def _fake_run(cmd, cancel_check, cwd=None, env=None, stdin_text=None, timeout_sec=None):
+    def _fake_run(cmd, cancel_check, cwd=None, env=None, stdin_text=None, timeout_sec=None, health_scope=None):
         seen.update({"cmd": cmd, "cwd": cwd, "env": env})
         return True, "답변"
 
@@ -190,7 +190,7 @@ def test_child_runs_in_a_neutral_workdir(monkeypatch, tmp_path):
     mod = _load_runner()
     seen: dict = {}
     monkeypatch.setattr(mod, "_run_cli_cancelable",
-                        lambda cmd, cc, cwd=None, env=None, stdin_text=None, timeout_sec=None:
+                        lambda cmd, cc, cwd=None, env=None, stdin_text=None, timeout_sec=None, health_scope=None:
                         (seen.update(cwd=cwd), (True, "a"))[1])
     monkeypatch.setenv("HOME", str(tmp_path))
     mod.ask_local_ai("claude", ["claude", "-p", "{prompt}"], "질문", None)
