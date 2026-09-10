@@ -8,6 +8,13 @@ source_of_truth: true
 
 # Review Log
 
+## REV-20260910T090000-attach-csv-table-deploy [SKIPPED:non-policy-doc] — 배포 결과 원장 반영
+
+§18.8 dispatch 표 첫 행(비정책 doc-only). 코드·정책 문서 변경 0 — 직전 cycle 의 Run·TASK·REPORT
+에 배포 도달성 사실을 반영한 기록 전용 변경이다. 그 도달성 판정 자체의 근거(두 replica·엣지
+경유 자산 대조 · `/livez`·`/healthz`·`/api/ui-release`)는 Run fragment 의 배포 블록에 있다.
+
+
 ## REV-20260909T170000-attach-csv-table [CODEX:attach-csv-table] — 첨부 CSV 표 렌더 (Minor §12.3)
 
 - **Trigger**: `UI/modal/layout` keyword matched (§18.8 dispatch 표 3행 — UI·모달·레이아웃 → ux, design).

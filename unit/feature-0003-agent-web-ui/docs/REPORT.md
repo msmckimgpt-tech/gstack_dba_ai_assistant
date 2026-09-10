@@ -24,8 +24,7 @@ div 의 `textContent` 로만 들어간다 — 값에 마크업 파서를 물리�
 codex 독립 리뷰가 P1 2건(빈 인용 필드 행 삭제로 «데이터 없음» 거짓 표시 · 깨진 인용의 조용한
 값 변형)과 확인 라운드 P2 1건(CRLF 에서 거짓 경고)을 냈고 전건 수정했다. **첫 시각 캡처를 눈으로
 보고** 픽셀 결함 2건(행 번호 세로 쪼개짐 · 긴 셀 `max-width` 무시)을 추가로 잡았다 — 그 시점에
-자동 검증은 전부 green 이었다. 실제 설치 앱에서 실제 첨부를 여는 확인은 배포 후로 남겼다
-(fixture PASS 를 실제 앱 PASS 로 확대하지 않는다). [Run](test-runs.d/TASK-20260909T163000-attach-csv-table.md)
+자동 검증은 전부 green 이었다. 사용자 확인(스크린샷 검토, 2026-09-10) 후 배포했다 — `bin/deploy-web.sh --web-only` 는 **no-op(멱등)** 이었고(병행 세션이 내 머지 이후 HEAD `ebf5e365` 를 먼저 배포), 두 replica·엣지 경유 자산과 `/livez`·`/healthz`·`/api/ui-release` 로 도달성을 확인했다. **실제 설치 앱에서 실제 첨부를 여는 축은 여전히 `NOT-RUN`** — 사용자 소유의 실행 중인 앱을 조작해야 성립해 §16.6 (a)(b) 에 따라 수행하지 않았다(fixture PASS 를 실제 앱 PASS 로 확대하지 않는다). [Run](test-runs.d/TASK-20260909T163000-attach-csv-table.md)
 
 
 ## TASK-20260909-auth-transition — 로그인 화면 노출 수정 완료

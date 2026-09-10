@@ -53,6 +53,10 @@ DQA클라이언트 첨부파일 중, csv 확장자가 표 형태로 출력될 �
 
 - [x] 첨부 `csv` 를 표 형태로 출력 — 인용: "csv 확장자가 표 형태로 출력될 수 있도록" —
       산출물: `attach-diff.js` 표 렌더 경로 + `chat.css` 격자 스타일.
+- [x] 배포 — 사용자 확인(스크린샷 검토 후 "배포까지 진행해주세요", 2026-09-10) 후
+      `bin/deploy-web.sh --web-only` 실행. **no-op(멱등)** — 병행 세션이 내 머지 이후 HEAD
+      `ebf5e365` 를 먼저 배포했고 그 안에 이 변경이 포함됐다. 두 replica·엣지 경유 자산과
+      `/livez`·`/healthz`·`/api/ui-release` 로 도달성을 확인했다(Run 의 배포 블록).
 - [x] 그 출력이 **DQA 클라이언트에서** 보인다 — 인용: "DQA클라이언트 첨부파일 중" —
       산출물: PB-0009 Run(`test-runs.d/TASK-20260909T163000-attach-csv-table.md`).
       (클라이언트는 서버가 서빙하는 같은 화면을 WebView2 로 연다 — `client/appwindow.py`.)
