@@ -188,6 +188,8 @@ def decode_session_output(result: dict, out: str, err: str, returncode: int) -> 
         return False, _SESSION_MISSING
     good = returncode == 0 and result["completed"] and not failed and bool(answer.strip())
     if not good:
+        if not events and out.strip():
+            result["failure_detail"] = out.strip()
         result["completed"] = False
         return False, "연결된 AI가 정상적인 최종 답변을 완료하지 못했습니다."
     return True, answer.strip()

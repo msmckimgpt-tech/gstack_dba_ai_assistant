@@ -19,7 +19,7 @@ import urllib.parse
 from .base import CHILD_TEXT_IO, _AI_TIMEOUT_SEC, _CANCEL_TICK_SEC, _HOME_DIRNAME
 from .discovery import _resolve_exe
 from .events import _EV_AI_FAIL, _EV_AI_SPAWN_FAIL, _EV_AI_TIMEOUT
-from .logs import _SECRET_PATTERNS, _log, _log_exc, log_event
+from .logs import _log, _log_exc, _scrub, log_event
 from .caps import schedule_health_recheck
 from .state import ai_blocked, ai_health_scope, note_ai_outcome
 from .runtimes import _APPEND_SYSTEM_FLAG, _KEEP_MCP, _RUNTIME_SPECS, _STRICT_MCP_FLAG, runtime_option_flag
@@ -62,12 +62,11 @@ _FAIL_DETAIL_MAX = 400
 #: 아픈 러너가 즉시 내는 답. 사유(관측된 것)와 **다음 행동**을 함께 준다.
 def _unhealthy_notice(reason: str) -> str:
     why = str(reason or "").strip() or "연결된 AI 가 응답하지 않습니다."
-    return (f"{why}\n\n"
-            "그 컴퓨터에서 해당 AI CLI 에 다시 로그인한 뒤(예: `claude` 재인증) 질문을 다시 "
-            "보내 주세요. 러너를 다시 띄울 필요는 없습니다 — 응답이 돌아오면 자동으로 "
-            "정상 처리됩니다.\n\n"
-            "(이 답변은 연결된 AI 를 호출하지 않고 즉시 안내한 것입니다. 응답하지 않는 것이 "
-            "이미 관측된 상태에서 기다리게 하지 않기 위함입니다.)")
+    hint = next((hint for pattern, hint in _FAILURE_HINTS if pattern.search(why)),
+                "DQA에서 AI 연결 상태를 확인하거나 다른 사용 가능한 AI를 선택해 주세요.")
+    if hint not in why:
+        why += "\n\n" + hint
+    return why + "\n\n(연결된 AI의 이전 실패를 확인해 즉시 안내했습니다. 복구 여부는 자동으로 확인합니다.)"
 
 
 #: **stderr 에 있어도 실패 원인이 아닌** 줄 — 이것만 남으면 stderr 는 «비었다» 로 본다.
@@ -77,6 +76,10 @@ def _unhealthy_notice(reason: str) -> str:
 #: 진짜 사유(stdout 에 있다)를 덮어쓴다.
 _STDERR_NOISE = (
     re.compile(r"^\s*warning:\s*no stdin data received", re.I),
+    re.compile(r"^\s*Permission allow rule \([^\r\n]+\): .+ has a wildcard before "
+               r"the rest of the command, so it also matches any options inserted at that "
+               r"position and approves them without a prompt\. Replace that \* with the "
+               r"exact value you mean, or only use \* after the subcommand\.\s*$"),
     re.compile(r"^\s*$"),
 )
 
@@ -84,10 +87,10 @@ _STDERR_NOISE = (
 #: 잡는다 — 어느 CLI 든 같은 부류의 실패는 같은 말을 쓰기 때문이고, 새 런타임이 붙어도 표를
 #: 고칠 필요가 없다. 하나도 안 맞으면 안내 없이 원문만 전달한다(추측해 오도하지 않는다).
 _FAILURE_HINTS: tuple[tuple[object, str], ...] = (
-    (re.compile(r"usage limit|session limit|quota|rate.?limit|too many requests|"
+    (re.compile(r"usage limit|session limit|weekly limit|quota|rate.?limit|too many requests|"
                 r"사용 한도|한도에 도달", re.I),
-     "연결된 AI 의 사용 한도에 걸렸습니다. 위에 적힌 초기화 시각이 지난 뒤 같은 질문을 다시 "
-     "보내면 처리됩니다(질문은 그대로 다시 보내면 됩니다)."),
+     "연결된 AI의 사용 한도에 걸렸습니다. 초기화 시각이 안내돼 있다면 그 이후 다시 보내면 "
+     "재시도할 수 있습니다. DQA에서 다른 사용 가능한 AI를 선택할 수도 있습니다."),
     (re.compile(r"not logged in|not authenticated|please\s+(run\s+)?/?log\s?in|"
                 r"unauthorized|invalid api key|\b401\b", re.I),
      "연결된 AI 에 로그인돼 있지 않습니다. 러너를 띄운 컴퓨터에서 그 CLI 에 로그인한 뒤 "
@@ -101,7 +104,7 @@ _FAILURE_HINTS: tuple[tuple[object, str], ...] = (
 )
 
 #: 실패 원문에 섞여 나갈 수 있는 자격증명 형태. 사유를 살리려다 토큰을 대화에 흘리지 않는다.
-_SECRET_PATTERNS = (
+_FAIL_SECRET_PATTERNS = (
     re.compile(r"\bmat_[A-Za-z0-9_\-]{4,}"),
     re.compile(r"(?i)\b(bearer|authorization:\s*bearer)\s+\S+"),
     re.compile(r"(?i)\b(sk|api)[-_][A-Za-z0-9_\-]{8,}"),
@@ -242,8 +245,8 @@ def _fit_cmdline(kind: str, cmd: list[str],
 
 def _redact_secrets(text: str) -> str:
     """실패 원문에서 자격증명 형태를 지운다. 사유를 살리는 일이 토큰 유출이 되면 안 된다."""
-    out = text or ""
-    for pat in _SECRET_PATTERNS:
+    out = _scrub(text or "")
+    for pat in _FAIL_SECRET_PATTERNS:
         out = pat.sub("<가려짐>", out)
     return out
 
@@ -463,11 +466,11 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
                   resumed=bool(session_result.get("resume")), completed=success,
                   dur_ms=_dur, exit=proc.returncode)
         if answer != _SESSION_MISSING:
-            note_ai_outcome(success, "연결된 AI가 답변을 완료하지 못했습니다.", runtime=health_scope)
             if not success:
                 answer = describe_cli_failure(int(proc.returncode or 1),
                                               session_result.get("failure_detail") or answer,
                                               box.get("err", ""))
+            note_ai_outcome(success, "" if success else answer, runtime=health_scope)
         return success, answer
     if proc.returncode != 0:
         # ⚠ 자식의 출력 **전문**(각 상한 2KB)은 원장에만 남긴다. 사용자 답변에 실리는 400자는
@@ -481,9 +484,9 @@ def _run_cli_cancelable(cmd: list[str], cancel_check, cwd: str | None = None,
                   stdout_bytes=len(box.get("out") or ""),
                   stdout_tail=_redact_secrets((box.get("out") or "")[-2000:]),
                   stderr_tail=_redact_secrets((box.get("err") or "")[-2000:]))
-        note_ai_outcome(False, "연결된 AI 가 오류로 끝났습니다.", runtime=health_scope)
-        return False, describe_cli_failure(int(proc.returncode), box.get("out", ""),
-                                           box.get("err", ""))
+        failure = describe_cli_failure(int(proc.returncode), box.get("out", ""), box.get("err", ""))
+        note_ai_outcome(False, failure, runtime=health_scope)
+        return False, failure
     log_event("ai.ok", level="DEBUG", exe=_exe, exit=0, dur_ms=_dur,
               stdout_bytes=len(box.get("out") or ""))
     # 한 번 통했다 = 이 러너는 쓸 수 있다. **즉시** 건강 상태를 되돌린다(자기 치유).

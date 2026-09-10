@@ -1483,7 +1483,8 @@ _ATTACHMENT_DEFAULT_MAX_BYTES_PER_ACCOUNT = 1_073_741_824  # 1 GB
 #   4. turn 당 materialize 개수 cap(_ASSISTANT_EDIT_COUNT_CAP) + 내용 size cap.
 #   5. 새 버전은 같은 RootAttachmentId 체인에 VersionNumber+1, CreatedByRole='assistant'.
 #      직전 최신 버전을 SupersededAt=NOW() 로 마킹(목록엔 최신만 노출).
-_ASSISTANT_EDIT_COUNT_CAP = 5          # turn 당 최대 materialize 첨부 수
+_ASSISTANT_EDIT_COUNT_CAP = 32         # 작은 파일 다건 전달; 합계 용량은 기존 5MiB 유지
+_ASSISTANT_ATTACHMENT_TOTAL_SIZE_CAP_BYTES = 5 * 1024 * 1024
 _ASSISTANT_EDIT_SIZE_CAP_BYTES = 1024 * 1024   # 단일 materialize 내용 1MB (텍스트 계열)
 
 # ──────────────────────────────────────────────────────────────────────────

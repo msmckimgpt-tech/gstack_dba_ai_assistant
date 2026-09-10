@@ -16,6 +16,8 @@ from typing import Any
 
 from fastapi import Request
 
+from shared.attachment_write import AttachmentWriteBudget
+
 import app  # noqa: F401 — app.X 동적 참조(꼬리 rebind 시점 import — register_all 이후, 순환 안전)
 
 
@@ -1970,6 +1972,7 @@ def _materialize_assistant_attachment_edits(
     request: "Request | None" = None,
     blocks: list[dict[str, Any]] | None = None,
     skipped: list[str] | None = None,
+    budget: AttachmentWriteBudget | None = None,
 ) -> list[dict[str, Any]]:
     """assistant 답변의 attachment-edit 블록을 새 첨부 버전으로 materialize.
 
@@ -2003,8 +2006,15 @@ def _materialize_assistant_attachment_edits(
     created: list[dict[str, Any]] = []
     import uuid as _uuid
 
-    for block in blocks[:app._ASSISTANT_EDIT_COUNT_CAP]:
+    if budget is None:
+        budget = AttachmentWriteBudget(app._ASSISTANT_EDIT_COUNT_CAP,
+                                       app._ASSISTANT_ATTACHMENT_TOTAL_SIZE_CAP_BYTES)
+    for block in blocks:
         src_id = int(block["source_attachment_id"])
+        attempt_reason = budget.start()
+        if attempt_reason:
+            _skip(f"attachment_id={src_id}: {attempt_reason}")
+            continue
         content = str(block.get("content") or "")
         body_bytes = content.encode("utf-8")
 
@@ -2019,6 +2029,11 @@ def _materialize_assistant_attachment_edits(
             )
             _skip(f"attachment_id={src_id}: 내용이 파일당 상한을 초과했습니다"
                   f"({len(body_bytes)} bytes > {app._ASSISTANT_EDIT_SIZE_CAP_BYTES}).")
+            continue
+
+        budget_reason = budget.check(len(body_bytes))
+        if budget_reason:
+            _skip(f"attachment_id={src_id}: {budget_reason}")
             continue
 
         # source 첨부 로드 + 가드 2: 같은 conversation + 같은 account scope.
@@ -2131,6 +2146,10 @@ def _materialize_assistant_attachment_edits(
         # 만든다. 이로써 "DB row 있는데 MinIO 객체 없음" orphan(다운로드 404)을 제거. put 만
         # 성공하고 INSERT 실패하면 MinIO 고아 객체만 남는데, 이는 정상 업로드 경로와 동일 특성
         # 이라 reconciliation worker 가 정리(무해).
+        budget_reason = budget.reserve(len(body_bytes))
+        if budget_reason:
+            _skip(f"attachment_id={src_id}: {budget_reason}")
+            continue
         try:
             storage_minio.put_object_bytes(
                 object_key, body_bytes, content_type=mime_type,
@@ -2278,6 +2297,8 @@ def _materialize_assistant_attachment_new(
     message_id: int | None = None,
     request: "Request | None" = None,
     remaining_count: int | None = None,
+    skipped: list[str] | None = None,
+    budget: AttachmentWriteBudget | None = None,
 ) -> list[dict[str, Any]]:
     """assistant 답변의 ```attachment-new``` 블록을 **brand-new (root) 첨부**로 materialize.
 
@@ -2291,6 +2312,10 @@ def _materialize_assistant_attachment_new(
     Returns: 생성된 첨부의 직렬화 dict 리스트(0개면 빈 리스트). 모든 실패는 fail-open(로깅만)
     — materialize 실패가 사용자 답변을 막지 않는다.
     """
+    def _skip(reason: str) -> None:
+        if skipped is not None:
+            skipped.append(reason)
+
     blocks = app._parse_attachment_new_blocks(answer)
     if not blocks:
         return []
@@ -2309,6 +2334,8 @@ def _materialize_assistant_attachment_new(
         logging.getLogger(__name__).info(
             "attachment-new: upload permission denied (account=%s, conv=%s) — skip",
             account_id, conversation_id)
+        for index, _block in enumerate(blocks, 1):
+            _skip(f"신규 첨부 {index}: 첨부 업로드 권한이 없습니다.")
         return []
 
     try:
@@ -2323,16 +2350,29 @@ def _materialize_assistant_attachment_new(
     created: list[dict[str, Any]] = []
     import uuid as _uuid
 
-    for block in blocks[:_cap]:
+    if budget is None:
+        budget = AttachmentWriteBudget(_cap, app._ASSISTANT_ATTACHMENT_TOTAL_SIZE_CAP_BYTES)
+    for index, block in enumerate(blocks, 1):
+        attempt_reason = budget.start()
+        if attempt_reason:
+            _skip(f"신규 첨부 {index}: {attempt_reason}")
+            continue
         content = str(block.get("content") or "")
         body_bytes = content.encode("utf-8")
 
         # 가드 4: 빈 내용 skip + size cap(텍스트 계열, 편집 경로와 동일 상한).
         if not body_bytes:
+            _skip(f"신규 첨부 {index}: 내용이 비어 있습니다.")
             continue
         if len(body_bytes) > app._ASSISTANT_EDIT_SIZE_CAP_BYTES:
             logging.getLogger(__name__).warning(
                 "attachment-new: content too large (%d bytes) — skip", len(body_bytes))
+            _skip(f"신규 첨부 {index}: 파일당 용량 상한을 초과했습니다.")
+            continue
+
+        budget_reason = budget.check(len(body_bytes))
+        if budget_reason:
+            _skip(f"신규 첨부 {index}: {budget_reason}")
             continue
 
         # 파일명·확장자 코드-권위 결정(SEC): 경로구분자 제거 → stem 내부 dot 제거(이중확장자 차단)
@@ -2361,6 +2401,7 @@ def _materialize_assistant_attachment_new(
         )
         if not ok:
             logging.getLogger(__name__).warning("attachment-new: size cap exceeded — skip")
+            _skip(f"신규 첨부 {index}: 대화/계정 첨부 용량 상한을 초과했습니다.")
             continue
 
         sha256_hex = hashlib.sha256(body_bytes).hexdigest()
@@ -2368,6 +2409,10 @@ def _materialize_assistant_attachment_new(
         object_key = storage_minio.make_object_key(conversation_id, attachment_uuid, filename)
 
         # 원자성(V8): MinIO put 을 INSERT 전에 수행 — put 성공 후에만 DB row 생성(orphan DB row 방지).
+        budget_reason = budget.reserve(len(body_bytes))
+        if budget_reason:
+            _skip(f"신규 첨부 {index}: {budget_reason}")
+            continue
         try:
             storage_minio.put_object_bytes(
                 object_key, body_bytes, content_type=mime_type,
@@ -2379,6 +2424,7 @@ def _materialize_assistant_attachment_new(
             )
         except Exception:
             logging.getLogger(__name__).warning("attachment-new: MinIO put failed — skip")
+            _skip(f"신규 첨부 {index}: 저장소 쓰기에 실패했습니다.")
             continue
 
         # INSERT root 첨부 row(사용자 업로드 root 와 동형: RootAttachmentId=NULL, VersionNumber=1).
@@ -2408,6 +2454,7 @@ def _materialize_assistant_attachment_new(
         finally:
             cur.close()
         if not new_id:
+            _skip(f"신규 첨부 {index}: 첨부 기록에 실패했습니다.")
             continue
         try:
             conn.commit()

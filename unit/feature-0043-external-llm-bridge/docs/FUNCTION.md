@@ -3719,3 +3719,11 @@ Codex 설정을 변경하지 않는다. [OpenAI 공식 문서](https://learn.cha
 CLI 계약 확인: [Codex 비대화형 실행](https://developers.openai.com/codex/noninteractive), [Claude CLI headless](https://code.claude.com/docs/en/headless), 설치된 CLI help 및 실제 두 번 호출(2026-09-09).
 
 REQ-20260909-session-continuity 연결 계약 보완: claim의 최상위 `conversation_id`도 필수 전달값이다. 하위 `conversation_session`만 있어도 러너는 대화를 결속할 수 없다. 서버 전체 응답을 러너에 그대로 전달하는 회귀가 이 경계를 검사한다.
+
+
+## REQ-20260910-screenshot-failures — 오류 사유 및 다중 첨부
+
+- Claude 시작 시 permission wildcard 경고가 stdout의 주간 한도/초기화 시각을 가리지 않는다. 일반/세션 호출과 빠른 실패 안내 모두 실제 원인을 유지하며, 등록된 비밀값은 공통 마스킹한다.
+- 답변 블록 첨부는 수정·신규 합산 최대32회 처리 시도, 실제 저장 시도 UTF-8 합계5MiB, 파일당1MiB를 적용한다. 실패한 가드도 횟수를 소비하며 MinIO 시도 이후 실패도 바이트 예약을 반환하지 않는다. 기존 계정·대화·소유권·종류·업로드 권한·확장자 가드는 유지한다.
+- 13/23개 작은 SQL 파일은 전량 전달하며, 제한 초과 파일은 이유를 표시한다. block 후처리와 기존 update_attachment 도구의 별도 한도는 구분한다.
+- worker/bridge/inproc는 같은 후처리를 사용하고 audit request·첨부 목록·attachment_create 단계 계약을 유지한다.

@@ -4960,3 +4960,9 @@ Linux pwsh 미설치)에서 **항상 skip** 됐다. 같은 머신에 Windows `pw
 
 - Timestamp: 2026-09-10T17:20:00+09:00; Session: codex-model-switch-20260910
 - PR #1678/main1c620a97 배포·설치본 자동 갱신 증거, 병행 릴리스931a543e 통합 회귀와 최신 해시 대조, 실제 DQA Opus → GPT-6-Astra 전환 및 합성 응답23.427초 PASS를 TASK/REPORT/Run에 기록한다. 제품 코드 변경 없음.
+
+
+## CHG-20260910T180000-screenshot-failures (codex:01a08a78)
+
+- TASK-20260910-screenshot-failures / REQ-20260910-screenshot-failures: 시작 경고가 실제 종료 사유를 가리는 오류 수정, 세션/health에 사유 보존 및 공통 비밀 마스킹.
+- 첨부13개 중8개가 count5 슬라이스로 누락된 실측에 따라32회 시도·5MiB 공통 예산 및 구체 실패 사유를 도입. direct/worker/bridge 공통 후처리와 기존 audit/step 계약 유지.

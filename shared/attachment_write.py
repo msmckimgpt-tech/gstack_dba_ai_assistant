@@ -33,6 +33,37 @@ from typing import Any
 __all__ = ["count_attachment_block_fences", "apply_assistant_attachment_blocks"]
 
 
+class AttachmentWriteBudget:
+    """한 후처리의 저장 시도를 제한한다. 실패한 쓰기도 예약량을 반환하지 않는다."""
+
+    def __init__(self, count: int, size_bytes: int):
+        self.count = max(0, int(count))
+        self.size_bytes = max(0, int(size_bytes))
+        self.attempted_count = 0
+        self.used_count = 0
+        self.used_bytes = 0
+
+    def start(self) -> str:
+        if self.attempted_count >= self.count:
+            return f"한 답변의 첨부 개수 상한({self.count}개)을 초과했습니다."
+        self.attempted_count += 1
+        return ""
+
+    def check(self, size_bytes: int) -> str:
+        if self.used_count >= self.count:
+            return f"한 답변의 첨부 개수 상한({self.count}개)을 초과했습니다."
+        if self.used_bytes + size_bytes > self.size_bytes:
+            return f"한 답변의 첨부 합계 용량 상한({self.size_bytes} bytes)을 초과했습니다."
+        return ""
+
+    def reserve(self, size_bytes: int) -> str:
+        reason = self.check(size_bytes)
+        if not reason:
+            self.used_count += 1
+            self.used_bytes += size_bytes
+        return reason
+
+
 def count_attachment_block_fences(text: str) -> tuple[int, int]:
     """답변에서 **실제로 열리는** attachment 블록 fence 수 → `(edit, new)`.
 
@@ -91,7 +122,7 @@ def apply_assistant_attachment_blocks(conn, *, account: dict[str, Any], conversa
                                       message_id: int, answer: str,
                                       failed: bool = False,
                                       tool_attachment_ids: "list[int] | tuple" = (),
-                                      ops: Any = None) -> dict[str, Any]:
+                                      ops: Any = None, request: Any = None) -> dict[str, Any]:
     """첨부 쓰기 블록을 실제 첨부로 만들고 답변 본문을 정리한다.
 
     ## 계약
@@ -118,8 +149,9 @@ def apply_assistant_attachment_blocks(conn, *, account: dict[str, Any], conversa
     }
     content = str(answer or "")
     tool_ids = [int(i) for i in (tool_attachment_ids or [])]
-    if not content or int(message_id or 0) <= 0:
+    if not content:
         return out
+    message_saved = int(message_id or 0) > 0
     if not tool_ids and ("attachment-edit" not in content) and ("attachment-new" not in content):
         return out                        # 흔한 경로 — 비용 0
 
@@ -127,24 +159,27 @@ def apply_assistant_attachment_blocks(conn, *, account: dict[str, Any], conversa
     created: list = []
     skipped: list[str] = []
     block_edited_n = 0
-    if not failed:
+    if not failed and message_saved:
+        budget = AttachmentWriteBudget(ops._ASSISTANT_EDIT_COUNT_CAP,
+                                       ops._ASSISTANT_ATTACHMENT_TOTAL_SIZE_CAP_BYTES)
         try:
             edited = ops._materialize_assistant_attachment_edits(
                 conn, account=account, conversation_id=conversation_id, answer=content,
-                message_id=int(message_id), request=None, skipped=skipped) or []
+                message_id=int(message_id), request=request, skipped=skipped, budget=budget) or []
             # 도구 전달분을 합치기 **전에** 블록 경로가 만든 수를 잡는다 — 합본으로 재면
             # "도구로 1건 전달 + 블록 1건 실패" 가 상쇄돼 경고가 사라진다.
             block_edited_n = len(edited)
             remaining = max(0, int(ops._ASSISTANT_EDIT_COUNT_CAP) - len(edited))
             created = ops._materialize_assistant_attachment_new(
                 conn, account=account, conversation_id=conversation_id, answer=content,
-                message_id=int(message_id), request=None, remaining_count=remaining) or []
+                message_id=int(message_id), request=request, remaining_count=remaining,
+                skipped=skipped, budget=budget) or []
         except Exception:
             log.error("첨부 materialize 실패 conv=%s msg=%s — 답변 전달은 계속",
                       conversation_id, message_id, exc_info=True)
 
     # 도구로 전달된 첨부를 답변 메시지에 바인딩 — 말풍선 칩 노출의 전제.
-    if tool_ids:
+    if tool_ids and message_saved:
         try:
             bound = ops._bind_tool_delivered_attachments(
                 conn, conversation_id=conversation_id, account_id=int(account.get("id") or 0),
@@ -166,6 +201,8 @@ def apply_assistant_attachment_blocks(conn, *, account: dict[str, Any], conversa
 
     edit_fences, new_fences = _count_expected_blocks(ops, content)
     undelivered = max(0, edit_fences - block_edited_n) + max(0, new_fences - len(created))
+    if not message_saved and not failed:
+        skipped.extend(["답변 저장을 확인하지 못해 첨부를 연결하지 못했습니다."] * max(undelivered, bool(tool_ids)))
     if not failed and (skipped or undelivered):
         uniq: list[str] = []
         for reason in skipped:
@@ -177,10 +214,9 @@ def apply_assistant_attachment_blocks(conn, *, account: dict[str, Any], conversa
             note += "".join(f">   · {r}\n" for r in uniq[:5])
             if len(uniq) > 5:
                 note += f">   · … 외 {len(uniq) - 5}건\n"
-        unexplained = max(0, undelivered - len(uniq))
+        unexplained = max(0, undelivered - len(skipped))
         if unexplained:
-            note += (f">   · 사유 미상 {unexplained}건 — 블록 형식 오류이거나 한 답변의 첨부 "
-                     f"개수 상한을 넘었을 수 있습니다.\n")
+            note += f">   · 사유 미상 {unexplained}건 — 파일 블록 형식 또는 저장 처리에 문제가 있습니다.\n"
         note += "> 위 답변에 갱신했다는 서술이 있어도 이 파일들은 전달되지 않았습니다."
         stripped = stripped.rstrip() + note
         log.warning("첨부 전달 실패 conv=%s — 사유있음 %d · 사유미상 %d "
@@ -190,7 +226,7 @@ def apply_assistant_attachment_blocks(conn, *, account: dict[str, Any], conversa
 
     out.update(edited=edited, created=created, skipped=skipped,
                undelivered=undelivered, answer=stripped, changed=(stripped != content))
-    if stripped != content:
+    if stripped != content and message_saved:
         try:
             out["answer_persisted"] = bool(ops._update_assistant_message_content(
                 conn, conversation_id, int(message_id), stripped))

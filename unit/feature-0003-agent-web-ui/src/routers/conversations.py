@@ -5225,174 +5225,43 @@ async def ask(request: Request) -> JSONResponse:
                 conversation_id,
             )
         materialized_attachments: list[dict[str, Any]] = []
-        if _attach_postprocess_here and conversation_id and render_output and not agent_result.get("error"):
-            try:
-                _edit_msg_id = int((latest_message or {}).get("id") or 0) if conversation_id else 0
-                materialized_attachments = app._materialize_assistant_attachment_edits(
-                    conn,
-                    account=account,
-                    conversation_id=conversation_id,
-                    answer=str(render_output),
-                    message_id=_edit_msg_id,
-                    request=request,
-                )
-                # FR-attach-delivery-truncated-by-output-cap (§18.8 [P1]): `update_attachment`
-                # 도구로 전달한 첨부는 답변 본문에 블록이 없어 위 materialize 가 잡지 못한다.
-                # message_id 가 확정된 지금 바인딩하지 않으면 **말풍선에 칩이 뜨지 않는다**
-                # (파일은 존재하는데 보이지 않는 상태 — 도구 결과의 "칩으로 받습니다" 가 거짓이 된다).
-                _tool_ids = [int(i) for i in (agent_result.get("tool_delivered_attachment_ids") or [])]
-                if _tool_ids:
-                    _bound = app._bind_tool_delivered_attachments(
-                        conn, conversation_id=conversation_id,
-                        account_id=int(account.get("id") or 0),
-                        attachment_ids=_tool_ids, message_id=_edit_msg_id,
-                    ) or []
-                    if _bound:
-                        materialized_attachments = list(_bound) + list(materialized_attachments)
-                    else:
-                        logging.getLogger(__name__).warning(
-                            "ask: 도구 전달 첨부 %d건 바인딩 결과 0 — 칩 미노출 가능 (conversation_id=%s)",
-                            len(_tool_ids), conversation_id)
-            except Exception:
-                # best-effort: materialize 실패는 사용자 응답을 막지 않는다.
-                logging.getLogger(__name__).warning(
-                    "ask: assistant attachment-edit materialize failed (conversation_id=%s)",
-                    conversation_id, exc_info=True,
-                )
-            # ④ TASK-0285: 첨부 수정을 진행 단계(step)로 명시 출력. "단계 보기"/progress 에 노출되고
-            # history 재로드에도 영속(PG agent_runtime.steps). run_id 는 이 답변 run 의 step 에서
-            # 추출(step 이 없는 단순 답변이면 run_id 부재 → 기록 skip). fail-soft.
-            if materialized_attachments:
-                try:
-                    _edit_run_id = ""
-                    _edit_max_idx = -1
-                    for _s in (render_steps or []):
-                        if _s.get("run_id"):
-                            _edit_run_id = str(_s.get("run_id") or "")
-                        try:
-                            _edit_max_idx = max(_edit_max_idx, int(_s.get("step_index", 0) or 0))
-                        except Exception:
-                            pass
-                    if _edit_run_id:
-                        _edit_names = ", ".join(
-                            f"'{a.get('original_filename') or '파일'}'(v{a.get('version_number') or 2})"
-                            for a in materialized_attachments
-                        )
-                        _edit_step = {
-                            "step_index": _edit_max_idx + 1,
-                            "action": "attachment_edit",
-                            "tool": "materialize_attachment",
-                            "work": f"첨부 {_edit_names}을(를) 새 버전으로 저장했습니다.",
-                            "reason": "수정한 첨부를 사용자에게 새 버전으로 제공합니다.",
-                            "args": {"attachment_ids": [int(a.get("id") or 0) for a in materialized_attachments]},
-                        }
-                        from modules.memory import save_memory_step as _save_step
-                        _save_step(conn, conversation_id, _edit_run_id, _edit_step)
-                        # 응답 steps 에도 즉시 반영 — 프론트가 새로고침 없이 단계로 표시.
-                        render_steps = list(render_steps or []) + [
-                            {**_edit_step, "run_id": _edit_run_id, "work_source": "llm", "reason_source": "llm"}
-                        ]
-                except Exception:
-                    logging.getLogger(__name__).warning(
-                        "ask: materialize step record failed (conversation_id=%s)",
-                        conversation_id, exc_info=True,
-                    )
-
-        # FR-brandnew-script-attachment-delivery-gap (conversation_audit 2026-07-24): assistant 가
-        # 답변 본문에 ```attachment-new``` 블록을 넣었으면(사용자가 새로 생성한 스크립트/쿼리를
-        # 다운로드 첨부로 요청) source 없이 root 첨부로 materialize. 편집 경로와 동일 fail-open,
-        # 응답 new_attachments 로 표면화. 편집(수정본)과 신규(새 파일)를 별도 리스트로 추적한다.
         new_attachments: list[dict[str, Any]] = []
-        if _attach_postprocess_here and conversation_id and render_output and not agent_result.get("error"):
-            try:
-                _new_msg_id = int((latest_message or {}).get("id") or 0) if conversation_id else 0
-                new_attachments = app._materialize_assistant_attachment_new(
-                    conn,
-                    account=account,
-                    conversation_id=conversation_id,
-                    answer=str(render_output),
-                    message_id=_new_msg_id,
-                    request=request,
-                    # turn 당 개수 cap 을 편집 경로와 합산(§18.8 MINOR): 이미 materialize 된 편집 수를 뺀 잔여.
-                    remaining_count=app._ASSISTANT_EDIT_COUNT_CAP - len(materialized_attachments),
-                )
-            except Exception:
-                logging.getLogger(__name__).warning(
-                    "ask: assistant attachment-new materialize failed (conversation_id=%s)",
-                    conversation_id, exc_info=True,
-                )
-            if new_attachments:
+        if _attach_postprocess_here and conversation_id and isinstance(render_output, str):
+            result = app._apply_assistant_attachment_blocks(
+                conn, account=account, conversation_id=conversation_id,
+                message_id=int((latest_message or {}).get("id") or 0), answer=render_output,
+                failed=bool(agent_result.get("error")),
+                tool_attachment_ids=agent_result.get("tool_delivered_attachment_ids") or [],
+                request=request,
+            )
+            render_output = result["answer"]
+            materialized_attachments = result["edited"]
+            new_attachments = result["created"]
+            for action, attachments in (("attachment_edit", materialized_attachments),
+                                        ("attachment_create", new_attachments)):
+                if not attachments:
+                    continue
                 try:
-                    _new_run_id = ""
-                    _new_max_idx = -1
-                    for _s in (render_steps or []):
-                        if _s.get("run_id"):
-                            _new_run_id = str(_s.get("run_id") or "")
-                        try:
-                            _new_max_idx = max(_new_max_idx, int(_s.get("step_index", 0) or 0))
-                        except Exception:
-                            pass
-                    if _new_run_id:
-                        _new_names = ", ".join(
-                            f"'{a.get('original_filename') or '파일'}'" for a in new_attachments
-                        )
-                        _new_step = {
-                            "step_index": _new_max_idx + 1,
-                            "action": "attachment_create",
+                    run_id = next((str(step["run_id"]) for step in reversed(render_steps or [])
+                                   if step.get("run_id")), "")
+                    if run_id:
+                        step = {
+                            "step_index": max((int(s.get("step_index") or 0)
+                                               for s in render_steps or []), default=-1) + 1,
+                            "action": action,
                             "tool": "materialize_attachment",
-                            "work": f"새 첨부 {_new_names}을(를) 파일로 저장했습니다.",
-                            "reason": "생성한 스크립트를 사용자에게 다운로드 첨부로 제공합니다.",
-                            "args": {"attachment_ids": [int(a.get("id") or 0) for a in new_attachments]},
+                            "work": f"첨부 {len(attachments)}개를 파일로 저장했습니다.",
+                            "reason": "작성한 파일을 다운로드 첨부로 제공합니다.",
+                            "args": {"attachment_ids": [int(a.get("id") or 0) for a in attachments]},
                         }
                         from modules.memory import save_memory_step as _save_step
-                        _save_step(conn, conversation_id, _new_run_id, _new_step)
+                        _save_step(conn, conversation_id, run_id, step)
                         render_steps = list(render_steps or []) + [
-                            {**_new_step, "run_id": _new_run_id, "work_source": "llm", "reason_source": "llm"}
+                            {**step, "run_id": run_id, "work_source": "llm", "reason_source": "llm"}
                         ]
                 except Exception:
                     logging.getLogger(__name__).warning(
-                        "ask: attachment-new step record failed (conversation_id=%s)",
-                        conversation_id, exc_info=True,
-                    )
-
-        # ★ TASK-0286: attachment-edit 블록을 답변에서 제거 → 전체 수정본 본문이 채팅에 노출되지
-        # 않게 한다(변경점은 diff 블록으로, 전체 수정본은 첨부 새 버전으로 전달). materialize 성공분은
-        # "📎 수정본 전달" 명시 문구로 치환. render_output(응답)뿐 아니라 DB content 도 갱신해
-        # history 재로드·LLM 재컨텍스트에서도 전체 본문이 사라지게 한다. error 무관 — 블록 텍스트가
-        # 남아 있으면 항상 제거(본문 노출 방지).
-        # ⚠ worker 모드에서는 이 strip 도 수행하지 않는다(§18.8 BLOCKER). 후처리 소유자는 워커이고,
-        # 여기서 빈 materialize 목록으로 strip 하면 **첨부를 만들지 않은 채 블록만 지워 DB 에 저장**
-        # → 워커가 뒤이어 읽을 때 블록이 사라져 첨부가 영영 생성되지 않고 스크립트 본문도 소실된다
-        # (원 결함보다 악화). 워커의 후처리가 strip 까지 책임진다.
-        if _attach_postprocess_here and conversation_id and isinstance(render_output, str) and "attachment-edit" in render_output:
-            _stripped_out = app._strip_attachment_edit_blocks(render_output, materialized_attachments)
-            if _stripped_out != render_output:
-                render_output = _stripped_out
-                try:
-                    _strip_msg_id = int((latest_message or {}).get("id") or 0)
-                    if _strip_msg_id > 0:
-                        app._update_assistant_message_content(conn, conversation_id, _strip_msg_id, _stripped_out)
-                except Exception:
-                    logging.getLogger(__name__).warning(
-                        "ask: attachment-edit strip content update failed (conversation_id=%s)",
-                        conversation_id, exc_info=True,
-                    )
-
-        # FR-brandnew-script-attachment-delivery-gap: attachment-new 블록도 답변에서 제거 →
-        # 전체 스크립트 본문이 채팅에 노출되지 않게 하고 "📎 첨부 전달" 안내로 치환(전체 파일은
-        # 다운로드 첨부로 전달). 편집 strip 과 동일 정책 — DB content 도 갱신.
-        # worker 모드 미수행 이유는 위 attachment-edit strip 주석과 동일(§18.8 BLOCKER).
-        if _attach_postprocess_here and conversation_id and isinstance(render_output, str) and "attachment-new" in render_output:
-            _stripped_new = app._strip_attachment_new_blocks(render_output, new_attachments)
-            if _stripped_new != render_output:
-                render_output = _stripped_new
-                try:
-                    _strip_new_msg_id = int((latest_message or {}).get("id") or 0)
-                    if _strip_new_msg_id > 0:
-                        app._update_assistant_message_content(conn, conversation_id, _strip_new_msg_id, _stripped_new)
-                except Exception:
-                    logging.getLogger(__name__).warning(
-                        "ask: attachment-new strip content update failed (conversation_id=%s)",
+                        "ask: attachment step record failed (conversation_id=%s)",
                         conversation_id, exc_info=True,
                     )
 
@@ -5829,17 +5698,12 @@ def _apply_assistant_attachment_blocks(conn, *, account: dict[str, Any], convers
                                        message_id: int, answer: str,
                                        failed: bool = False,
                                        tool_attachment_ids: "list[int] | tuple" = (),
+                                       request: Request | None = None,
                                        ) -> dict[str, Any]:
-    """`shared.attachment_write` 정본에 web 원시연산(`app`)을 물려 호출한다.
-
-    **적용 범위**: 비동기 답변 경로 2개 — ask-worker(`modules/ask.py`)와 브리지
-    (`routers/ai_tools.py`). 동기 inproc 경로(`_ask_impl`)는 아직 자체 시퀀스를 갖고 있다
-    (materialize 사이에 step 기록이 끼고, 응답 body 에 첨부 목록을 실으며, `request` 로 audit
-    을 dispatch 한다). 그쪽까지 합치는 것이 옳지만 응답 shape 를 건드리므로 분리했다.
-    """
+    """worker·bridge·inproc 후처리를 같은 저장/진단 경계에 연결한다."""
     return _shared_apply_assistant_attachment_blocks(
         conn, account=account, conversation_id=conversation_id, message_id=message_id,
-        answer=answer, failed=failed, tool_attachment_ids=tool_attachment_ids, ops=app)
+        answer=answer, failed=failed, tool_attachment_ids=tool_attachment_ids, ops=app, request=request)
 
 
 def _model_to_llm_provider(model: str | None) -> str | None:

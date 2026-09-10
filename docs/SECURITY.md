@@ -2072,7 +2072,7 @@ F5:B9:C5:81:5C:9B:47:A9:9A:49:9E:75:93:73:F1:1C:A5:94:3E:7B:48:51:E0:6E:16:69:D8
 | kind | 텍스트 계열만 — 바이너리·비텍스트 갱신 차단 |
 | 확장자 | 신규 생성은 allowlist(`_ASSISTANT_NEW_ALLOWED_EXT`) — 실행형·바이너리 차단 |
 | 파일명 | **코드가 권위적으로 정화**한다. 편집은 원본 파일명 승계(LLM 이 준 `filename` 무시) |
-| 용량·개수 | 파일당 상한 · 대화/계정 용량 상한 · turn 당 개수 cap(`_ASSISTANT_EDIT_COUNT_CAP=5`, edit·new 합산) |
+| 용량·개수 | 파일당 상한 · 대화/계정 용량 상한 · 블록 후처리당 처리 시도32회(edit·new 합산, 가드 실패 포함) 및 실제 저장 시도 합계5MiB(`_ASSISTANT_ATTACHMENT_TOTAL_SIZE_CAP_BYTES`, 실패 예약량 유지) |
 | 업로드 권한 | 신규 생성은 해당 계정의 업로드 권한을 재검사 |
 | provenance | `CreatedByRole='assistant'` + `MetaJson` 각인 + audit dispatch(V10) |
 

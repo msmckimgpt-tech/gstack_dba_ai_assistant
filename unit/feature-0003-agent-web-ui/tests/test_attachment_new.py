@@ -411,8 +411,8 @@ def test_a1_ask_invokes_new_materialize_and_strip():
     import inspect
     import routers.conversations as _rc
     src = inspect.getsource(_rc)
-    assert "_materialize_assistant_attachment_new(" in src
-    assert "_strip_attachment_new_blocks(" in src
+    assert "app._apply_assistant_attachment_blocks(" in src
+    assert "_materialize_assistant_attachment_new(" not in src
     assert 'result["new_attachments"]' in src
 
 
@@ -436,7 +436,7 @@ def test_a2_web_postprocess_is_evidence_gated():
     assert "(not app._is_worker_mode()) or _raw_block_left" in src
     # materialize 2곳 + strip 2곳 = 4곳 전부 게이트 통과.
     guarded = len(re.findall(r"if _attach_postprocess_here and ", src))
-    assert guarded >= 4, f"web 후처리 게이팅 누락(발견 {guarded}/4)"
+    assert guarded == 1, f"공용 후처리 게이트가 중복되거나 누락됨: {guarded}"
     for m in re.finditer(
         r"^\s*if .*_strip_attachment_(?:edit|new)_blocks|^\s*if .*\"attachment-(?:edit|new)\" in render_output",
         src, re.M,
