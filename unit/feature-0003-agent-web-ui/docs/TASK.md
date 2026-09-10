@@ -144,6 +144,9 @@ feature_status_note: 비공개 Product 원자 생성·초기 접근 권한 + 고
 - [x] 최신 main 통합 — `git merge --no-edit origin/main` 에서 append-only 문서 머리 충돌 2건
       (TASK·REPORT: 내 엔트리 ↔ 병행 세션 `client-entry-gate`)을 **양측 보존**으로 자율 해결하고
       양측 부모 헤딩 대조(lost=0/0 · 합집합)로 검증했다(§16.4).
+- [x] 회귀 귀책 대조 — 컨테이너 전체 회귀의 feature-0043 실패 1건이 이 변경과 독립임을
+      4가지로 실측(커밋이 그 feature·`shared/**` 0파일 · 단독/격리 실행 통과 · 내 테스트를
+      앞에 붙여도 미재현). base 전체 회귀 재현은 미완(중단, rc=137) — 미완을 명시했다.
 - [ ] PB-0009 실 DQA 클라이언트 Run — AC-03-6. **NOT-RUN**: 이 변경은 아직 배포되지 않았고
       (배포는 오케스트레이터 담당) 실 DQA 클라이언트는 사용자 Windows 머신에 있다.
       대체 검증(정적 구조 + Node 파서)과 사유를

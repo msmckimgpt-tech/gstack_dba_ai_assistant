@@ -6725,3 +6725,15 @@ lost=0. 머지 후 회귀 93 passed.
 「마지막 커밋의 diff」를 보는데 merge 의 combined diff 에는 그 엔트리들의 순증분이 나타나지
 않는다(실제 내용은 부모 `bca600df` 에 있고 그 커밋의 pre-commit gate 는 PASS 였다). 이 저장소의
 기존 관례(CHG-20260910T114800-postmerge-record)와 같이 정상 후속 문서 커밋으로 정합한다.
+
+## CHG-20260910T180500-item03-regression-attribution
+- Timestamp: 2026-09-10T18:05:00+09:00
+- Related TASK: TASK-20260910-item03-product-atomic-create
+- 제품 코드 변경 없음. 회귀 귀책 대조 결과 기록.
+
+컨테이너 전체 회귀에서 `feature-0043` 테스트 1건이 실패했다. 이 변경과 독립임을 4가지로 실측
+확인했다(커밋이 feature-0043·`shared/**` 0파일 · 단독 실행은 base·내 트리 모두 통과 ·
+feature-0043 전체 격리 실행 통과 · 내 신규 테스트를 바로 앞에 붙여도 미재현). 전체 회귀에서만
+나타나는 교차-feature 순서/오염 상호작용으로 보인다. **base 의 전체 회귀 재현은 내가 중단시켜
+(rc=137) 완료하지 못했으므로 「base 에서도 실패한다」고 주장하지 않는다** — PR CI 전체 회귀가
+최종 판정이다.

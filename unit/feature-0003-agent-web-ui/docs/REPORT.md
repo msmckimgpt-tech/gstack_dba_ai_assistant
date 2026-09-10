@@ -90,6 +90,11 @@ source_of_truth: false
 - **접근DB 갱신 핸들러의 DELETE→INSERT 루프는 트랜잭션 밖**이다(autocommit). 이번에는 그
   루프에 도달하는 과길이 입력을 상한 정합(64)으로 막았지만, 루프 자체의 원자화는 ITEM-03 이
   건드리지 않은 구조라 후속 항목으로 남긴다.
+- **컨테이너 전체 회귀의 feature-0043 실패 1건은 이 변경과 독립**이다(근거 4가지는 Run 참조 —
+  내 커밋이 feature-0043·`shared/**` 를 0개 바꿨고, 그 테스트·그 feature 전체를 격리 실행하면
+  base·내 트리 모두 통과한다). 전체 회귀에서만 나타나는 교차-feature 순서/오염 상호작용으로
+  보이며, **base 의 전체 회귀 재현은 내가 중단시켜(rc=137) 완료하지 못했다** — 「base 에서도
+  같이 실패한다」고 주장하지 않는다. 오케스트레이터의 PR CI 전체 회귀로 최종 판정하면 된다.
 - **`bin/verify-completion.sh` check #13 의 `visual_verification_scope: always` 는 현재
   «hard gate» 가 아니다** (적대 검증 qa 가 함수를 직접 돌려 실증). 잘 쓴
   `Environment: DQA-client / Result: NOT-RUN / Reason:` fragment 는 `pending` 으로 분류되고,

@@ -8895,3 +8895,12 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - 적대 검증 패널 정본은 REV-20260910T170000-item03 (§18.8 4 도메인, CONCERN). 이 엔트리는 그
   이후의 머지 결과 기록이며 새 제품 변경을 담지 않는다. 충돌 해결은 양측 부모 헤딩 대조로
   검증했다(lost=0/0 · 합집합) — 상세는 MODIFY CHG-20260910T175000-item03-postmerge.
+
+## REV-20260910T180500-item03-attribution [SKIPPED:non-policy-doc]
+- Related TASK: feature-0003-agent-web-ui (TASK-20260910-item03-product-atomic-create)
+- Trigger: 비정책 doc-only — 회귀 귀책 대조 결과 기록. 제품 코드 변경 0.
+- Timestamp: 2026-09-10T18:05:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no
+- 컨테이너 전체 회귀의 feature-0043 실패 1건이 이 변경과 독립임을 4가지로 실측(상세는 Run).
+  base 전체 회귀 재현은 미완(내가 중단, rc=137) — 그 사실을 숨기지 않고 명시했다.
