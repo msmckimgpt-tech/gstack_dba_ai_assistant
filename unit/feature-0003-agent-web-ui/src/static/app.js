@@ -274,8 +274,13 @@ export const state = {
   // refreshWorkspace 가 실 cid entry 등재 시 자동 정리. 사용자 클릭 시 그 sentinel 컨텍스트로 swap
   // 가능 — activeConversationId="", pendingNewConversation=true, pendingSentinel=clicked sentinel,
   // pendingBubble 도 entry metadata 기반 복원. multi-pending 지원.
-  // Map<sentinel, { sentinel, message, started_at, status }>. status: "in_flight" | "failed".
+  // Map<sentinel, { sentinel, message, started_at, status, folder_id }>. status: "in_flight" | "failed".
   pendingConversationEntries: new Map(),
+  // folder-newconv: 폴더 헤더의 '📝' 로 시작한 새 대화의 목표 폴더 id (없으면 null = 최상위).
+  //   대화 row 는 첫 메시지 전송 시 lazy 생성되므로, 그때까지 "어느 폴더에 넣을지" 를 여기에 들고
+  //   있다가 cid 확정 직후 `PATCH /api/conversations/{cid}/folder` 로 배정한다. pending 컨텍스트를
+  //   오가도(_switchToPendingConversationContext) entry.folder_id 에서 복원돼 목표가 섞이지 않는다.
+  pendingFolderId: null,
   // TASK-0061 Phase 1+2 (REQ-20260515-0003 / REQ-20260515-0003): pending assistant bubble.
   // sendPrompt() 시작 시 user message + pending bubble 즉시 prepend, polling step 으로 갱신,
   // /api/ask 응답 또는 attach 완료 시 실 assistant message 로 replace.
@@ -2506,7 +2511,14 @@ export function renderConversationHeader() {
     if (state.pendingNewConversation) {
       // TASK-0048: pending 새 대화 — 첫 메시지 전송 전 단계.
       conversationTitleEl.textContent = "새 대화";
-      conversationSubtitleEl.textContent = "첫 메시지를 입력하면 대화가 만들어집니다.";
+      // folder-newconv: 폴더 행 '📝' 로 들어온 pending 이면 **어느 폴더에 만들어지는지**를 여기서
+      //   말한다. 이 부제가 없으면 최상위 '+ 새 대화' 와 화면이 글자 하나 다르지 않아, 다른 대화를
+      //   쓰던 중 잘못 눌렀을 때 목적지가 바뀐 것을 알 방법이 사이드바 행 하나뿐이다.
+      const _pf = state.pendingFolderId == null ? null
+        : state.folders.find((f) => Number(f.folder_id) === Number(state.pendingFolderId));
+      conversationSubtitleEl.textContent = _pf
+        ? `'${_pf.name}' 폴더에 만들어집니다. 첫 메시지를 입력하세요.`
+        : "첫 메시지를 입력하면 대화가 만들어집니다.";
       return;
     }
     conversationTitleEl.textContent = "대화를 선택하세요";
@@ -5959,11 +5971,16 @@ async function createConversation() {
 
 // TASK-0048: "새 대화" 버튼은 즉시 backend row 를 만들지 않는다. client-side pending 상태만 진입하고
 // 실제 row 생성은 첫 메시지 전송 시 /api/ask 의 lazy creation path 에 위임한다. 빈 대화 누적 방지.
-function beginPendingConversation() {
+// folder-newconv: folderId 를 주면 그 폴더를 목표로 하는 새 대화(pending)로 진입한다. 헤더의
+//   '+ 새 대화' 는 인자 없이 호출해 종전과 동일(최상위)하다 — 기본값이 곧 기존 동작.
+export function beginPendingConversation(folderId = null) {
   if (!can("conversation.create")) {
     showPermissionDeniedToast("conversation.create");
     return;
   }
+  // folder-newconv: 목표 폴더는 pending 컨텍스트의 일부다. 매 진입마다 명시적으로 덮어써
+  // 직전 폴더 대상 대화의 목표가 이후의 최상위 '새 대화' 로 새어 들어가지 않게 한다.
+  state.pendingFolderId = folderId == null ? null : Number(folderId);
   // TASK-0082: 각 + 새 대화 클릭마다 unique sentinel 부여 + 항상 reset 흐름 진입.
   // 첫 lazy-create in-flight 여부와 무관하게 두 번째 컨텍스트는 별개 sentinel 으로 분리되어 input
   // 활성화 + 두 번째 send 진입이 정상 동작. 첫 send 의 finally 가 closure 의 옛 sentinel 만 cleanup
@@ -6012,6 +6029,9 @@ export function _switchToPendingConversationContext(entry) {
   state.activeConversationId = "";
   state.pendingNewConversation = true;
   state.pendingSentinel = entry.sentinel;
+  // folder-newconv: 이 pending 대화가 어느 폴더를 목표로 시작됐는지 복원한다. 없으면 최상위(null)
+  //   — entry 에 없는 값을 직전 컨텍스트에서 물려받으면 다른 폴더로 배정되는 누출이 된다.
+  state.pendingFolderId = entry.folder_id == null ? null : Number(entry.folder_id);
   state.messages = [];
   state.hasMoreHistory = false;
   state.nextBeforeId = null;
@@ -6866,11 +6886,16 @@ export function closeFloatingMenus() {
   // openFloatingMenu 가 만든 모든 floating menu 를 id 무관하게 제거한다 — 신규 메뉴(folderMenu 등)가
   // 하드코딩 id 목록에서 누락돼 바깥클릭/ESC/scroll 로 안 닫히던 drift 를 data-마커 단일 SSOT 로 봉인.
   document.querySelectorAll("[data-floating-menu]").forEach((m) => m.remove());
-  // trigger aria-expanded/is-open 복원 (conv-item ··· + 폴더 ··· + 말풍선 ☰ 3종).
-  document.querySelectorAll(".conv-item-menu-trigger.is-open, .conv-folder-menu-trigger.is-open, .message-menu-trigger.is-open").forEach((t) => {
+  // trigger aria-expanded/is-open 복원 (conv-item ··· + 말풍선 ☰).
+  document.querySelectorAll(".conv-item-menu-trigger.is-open, .message-menu-trigger.is-open").forEach((t) => {
     t.classList.remove("is-open");
     t.setAttribute("aria-expanded", "false");
   });
+  // folder-newconv: `ownsAriaExpanded:false` 로 연 메뉴(폴더 헤더)는 **클래스만** 걷는다. 그 요소의
+  //   aria-expanded 는 메뉴가 아니라 «폴더 접힘/펼침» 을 뜻하므로 여기서 false 로 쓰면 펼쳐진 폴더가
+  //   접힌 것으로 읽힌다. 종전 셀렉터에 있던 `.conv-folder-menu-trigger` 는 그 요소가 사라져 죽은
+  //   가지였고, 그 탓에 헤더에 붙은 상태가 복구되지 않았다(디자인 리뷰 P1).
+  document.querySelectorAll(".is-menu-open").forEach((t) => t.classList.remove("is-menu-open"));
 }
 export function closeConversationItemMenu() {
   closeFloatingMenus();
@@ -6906,9 +6931,12 @@ function makeMenuItem(label, { action = null, conversation = null, danger = fals
 // null(기본 = '···'/'☰' 버튼 클릭)이면 기존 trigger-rect 기준 위치로 동작 → anchor=null 경로 byte-동치(회귀 0).
 let _floatingMenuAnchorPoint = null;
 
-export function openFloatingMenu(triggerEl, { id, className = "conv-item-menu", dataset = {}, buildItems } = {}) {
+export function openFloatingMenu(triggerEl, { id, className = "conv-item-menu", dataset = {}, buildItems, anchorPoint: explicitAnchor = null, ownsAriaExpanded = true } = {}) {
   closeFloatingMenus();
-  const anchorPoint = _floatingMenuAnchorPoint;  // 1회 소비 후 즉시 해제 — 다음 버튼 클릭에 좌표 누출 방지.
+  // 좌표 출처는 둘 — ① 호출자가 직접 넘긴 explicitAnchor(자기 요소에 contextmenu 를 단 경로;
+  // 폴더 헤더가 이 방식), ② _CTX_MENU_TARGETS 의 trigger-click 재발화가 실어 보낸 모듈 변수.
+  // 둘 다 없으면 종전대로 trigger rect 기준.
+  const anchorPoint = explicitAnchor || _floatingMenuAnchorPoint;  // 1회 소비 후 즉시 해제 — 다음 버튼 클릭에 좌표 누출 방지.
   _floatingMenuAnchorPoint = null;
   const menu = document.createElement("div");
   menu.id = id;
@@ -6935,8 +6963,16 @@ export function openFloatingMenu(triggerEl, { id, className = "conv-item-menu", 
   menu.style.top = `${Math.max(8, top)}px`;
   menu.style.left = `${left}px`;
 
-  triggerEl.classList.add("is-open");
-  triggerEl.setAttribute("aria-expanded", "true");
+  // folder-newconv: 트리거가 **자기 aria-expanded 를 이미 다른 의미로 쓰는** 요소일 수 있다
+  //   (폴더 헤더의 aria-expanded = 폴더 접힘/펼침). 그런 트리거는 `ownsAriaExpanded:false` 로 열어
+  //   ARIA 를 건드리지 않고 시각 상태만 `.is-menu-open` 으로 표시한다 — 종전처럼 덮어쓰면 접힌
+  //   폴더가 스크린리더에 "펼쳐짐" 으로 읽히고, 닫을 때 되돌릴 올바른 값도 알 수 없다.
+  if (ownsAriaExpanded) {
+    triggerEl.classList.add("is-open");
+    triggerEl.setAttribute("aria-expanded", "true");
+  } else {
+    triggerEl.classList.add("is-menu-open");
+  }
 
   const detach = () => {
     document.removeEventListener("mousedown", onDocClick, true);
@@ -9091,9 +9127,13 @@ if (promptInputEl) {
 // (=메뉴 없음)는 브라우저 기본 우클릭을 그대로 둔다.
 //
 // 새 확장 요소가 생기면 이 표에 { host, trigger } 한 줄만 추가하면 된다("등과 같이" 확장점).
+// folder-newconv: 폴더 헤더(.conv-folder-header)는 이 표에서 **의도적으로 빠져 있다**. 폴더의
+//   가시 버튼은 '📝'(= 이 폴더에서 새 대화)로 바뀌었고, 이 표는 «호스트 안 trigger 의 click 을
+//   재발화» 하는 방식이라 여기 남겨두면 우클릭이 메뉴 대신 새 대화를 열게 된다. 폴더 메뉴는
+//   sidebar.js 의 renderFolderNode 가 헤더에 직접 contextmenu 를 달아 openFolderMenu 를 부른다
+//   (좌표는 openFloatingMenu 의 anchorPoint 옵션으로 전달).
 const _CTX_MENU_TARGETS = [
   { host: ".conv-item",          trigger: ".conv-item-menu-trigger" },    // 좌측 대화 항목 → '···'
-  { host: ".conv-folder-header", trigger: ".conv-folder-menu-trigger" },  // 좌측 폴더 헤더 → '···'
   { host: ".message",            trigger: ".message-menu-trigger" },      // 대화 로그(말풍선) → '☰'
 ];
 
@@ -9101,7 +9141,7 @@ const _CTX_MENU_TARGETS = [
 // 선택이 있으면 기본 우클릭(복사 등)을 우선해 답변/SQL 복사를 보존한다(회귀 방지).
 // 선택 범위를 "그 호스트"로 스코핑해, 다른 곳(예: 로그) 선택이 사이드바 우클릭을
 // 과잉 차단하지 않게 한다.
-function _hasSelectionWithin(el) {
+export function _hasSelectionWithin(el) {
   const sel = window.getSelection ? window.getSelection() : null;
   if (!sel || sel.isCollapsed || !sel.rangeCount) return false;
   if (String(sel).trim().length === 0) return false;

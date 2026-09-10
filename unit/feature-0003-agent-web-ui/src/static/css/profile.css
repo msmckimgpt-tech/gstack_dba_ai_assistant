@@ -983,6 +983,11 @@
   position: relative;
   padding-right: 32px; /* trigger (22px) + margin (10px) 확보 — title/meta 가 trigger 와 겹치지 않도록 */
 }
+/* folder-newconv: pending 행('작성 중'·'응답 대기')에는 '···' 트리거가 없다 — 그 자리를 예약할
+   이유가 없다. 폴더 안 pending 은 들여쓰기까지 겹쳐 제목 가용폭이 특히 좁으므로(180px 사이드바 ·
+   depth 2 기준 ≈84px → 한글 6자) 예약분을 돌려준다. */
+.conv-item.is-pending,
+.conv-item.is-pending-inflight { padding-right: 8px; }
 .conv-item-menu-trigger {
   position: absolute;
   bottom: 6px;

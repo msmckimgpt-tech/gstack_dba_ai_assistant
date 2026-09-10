@@ -331,15 +331,41 @@
   font-size: 9.5px; font-weight: 500; opacity: .55;
   font-variant-numeric: tabular-nums; flex: 0 0 auto;
 }
-.conv-folder-menu-trigger {
-  flex: 0 0 auto; font-size: 13px; line-height: 1; color: var(--text-muted);
-  opacity: 0; cursor: pointer; padding: 0 2px; letter-spacing: -1px;
-  transition: opacity .12s, color .12s;
+/* folder-newconv (2026-09-10): 폴더 행의 가시 버튼은 '···'(메뉴 펼치기) 대신 '📝'(이 폴더에서
+   새 대화)다. 폴더 관리 메뉴는 헤더 우클릭으로 옮겨 갔다(sidebar.js renderFolderNode).
+   노출 규칙(평소 투명 → hover/포커스 시 등장)은 대화 행 '···' 과 같게 유지해 사이드바가 조용하다.
+   이모지는 color 로 물들지 않으므로 강조는 opacity 로만 준다. */
+.conv-folder-newconv-trigger {
+  /* 히트 타겟 — 대화 행 '···'(.conv-item-menu-trigger, 22×22) 와 같은 급으로 확보한다. 구 '···' 는
+     13px 텍스트 글리프라 실효 13×13 이었는데, 이 버튼은 «메뉴 열기»(빗맞아도 무해) 가 아니라
+     «대화 컨텍스트 생성» 이라 오조작 비용이 더 크다 — 작아지면 안 된다. 세로 margin 으로 상쇄해
+     행 높이는 그대로 둔다(행 높이는 .conv-folder-name ~16px 이 정한다). */
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; margin: -3px 0;
+  font-size: 12px; line-height: 1; border-radius: 4px;
+  /* 본문 --font 스택에는 이모지 패밀리가 없어 글리프 해결이 플랫폼 폴백에 맡겨진다. 여기서만
+     명시해 어느 환경에서도 같은 이모지 폰트로 그려지게 한다. */
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", var(--font);
+  opacity: 0; cursor: pointer;
+  transition: opacity .12s, background .12s;
 }
-.conv-folder-header:hover .conv-folder-menu-trigger,
-.conv-folder-menu-trigger.is-open,
-.conv-folder-menu-trigger:focus-visible { opacity: 1; }
-.conv-folder-menu-trigger:hover { color: var(--text-1); }
+.conv-folder-header:hover .conv-folder-newconv-trigger,
+.conv-folder-header:focus-within .conv-folder-newconv-trigger,
+.conv-folder-newconv-trigger:focus-visible { opacity: .9; }
+.conv-folder-newconv-trigger:hover { opacity: 1; background: rgba(0,0,0,.08); }
+/* hover 가 없는 입력수단(터치·펜)에서는 hover 가 영영 오지 않으므로 상시 노출한다 — 아니면
+   그 환경에서 이 기능은 우클릭 메뉴의 '이 폴더에서 새 대화' 항목으로만 도달 가능해진다. */
+@media (hover: none), (pointer: coarse) {
+  .conv-folder-newconv-trigger { opacity: .65; }
+}
+/* 우클릭 메뉴가 열려 있는 동안 «어느 폴더의 메뉴인지» 를 행이 계속 말하게 한다. 커서가 메뉴로
+   옮겨가면 헤더의 :hover 배경이 사라져, 유사한 이름의 폴더들 사이에서 대상이 지워진다.
+   (aria-expanded 는 폴더 접힘 상태 전용이라 메뉴는 클래스만 쓴다 — app.js openFloatingMenu 참조.) */
+.conv-folder-header.is-menu-open {
+  background: rgba(0,0,0,.06);
+  box-shadow: inset 2px 0 0 var(--accent, #2563eb);
+}
 /* folder-ux 개선3: 인라인 이름변경 텍스트박스(라벨 자리)
    sidebar-inline-rename: 대화 제목도 같은 인라인 편집을 쓰므로 공용 클래스
    `.conv-inline-rename-input` 로 스타일을 단일화한다(폴더 전용 클래스는 하위호환 유지). */

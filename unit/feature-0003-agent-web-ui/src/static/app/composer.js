@@ -1528,6 +1528,10 @@ async function _uploadComposerAttachment(file, opts = {}) {
     state.composerAttachments.uploadingCount += 1;
     _renderAttachmentPills();
     const pendingKey = state.pendingSentinel ? String(state.pendingSentinel) : "";
+    // folder-newconv: sendPrompt 의 `sendFolderId` 와 같은 계약 — 목표 폴더를 **진입 시점에 고정**한다.
+    //   `/api/new_conversation` 왕복 뒤에 라이브 state 를 읽으면, 그 수백 ms 사이에 사용자가 다른
+    //   폴더의 '📝' 를 누른 경우 이 대화가 엉뚱한 폴더로 배정된다(적대 리뷰 P3 — 두 경로의 계약이 갈림).
+    const uploadFolderId = state.pendingFolderId == null ? null : Number(state.pendingFolderId);
     try {
       const newConvBody = (state.productMode === "pinned" && state.pinnedProductId)
         ? { mode: "pinned", product_id: Number(state.pinnedProductId) }
@@ -1555,6 +1559,12 @@ async function _uploadComposerAttachment(file, opts = {}) {
       if (!state.conversations.find((c) => String(c.id) === earlyCid)) {
         state.conversations.unshift({ id: earlyCid, topic: "(파일 첨부 중)", display_status: "idle", created_at: new Date().toISOString(), account_id: state.session?.account_id || null, owner_account_id: state.user?.id || null, owner_username: state.user?.username || null });
       }
+      // folder-newconv: 첨부를 먼저 붙이는 경로는 sendPrompt **이전에** pending 을 끝내고 실 대화로
+      // 전환한다(위 pendingNewConversation=false). 그래서 여기서 배정하지 않으면 이후 send 는
+      // isLazyCreate=false 라 폴더 목표를 볼 기회가 영영 없다 — 폴더에서 파일부터 올린 새 대화가
+      // 조용히 최상위로 떨어지던 누락 경로다.
+      await _assignNewConversationToFolder(earlyCid, uploadFolderId);
+      state.pendingFolderId = null;
       renderConversationList();
       renderConversationHeader();
       renderComposer();
@@ -4001,6 +4011,28 @@ function _bindComposerActionsEvents() {
   });
 }
 
+// folder-newconv: 폴더 헤더 '📝' 로 시작한 대화는 서버 row 가 없는 pending 상태로 출발하므로,
+//   cid 가 발급되는 **그 순간** 폴더에 배정해야 한다. 대화가 생기는 경로가 셋이라(첨부 선행 생성 ·
+//   send 의 early-cid · /api/ask 의 lazy-create 응답) 배정을 이 한 함수로 모아 셋 다 같은 계약을
+//   쓰게 한다. 실패는 삼키지 않는다 — 대화는 만들어졌는데 폴더에 없는 상태이므로 사용자가 알아야
+//   원인(권한·네트워크)을 짚고 '이동' 으로 복구할 수 있다.
+async function _assignNewConversationToFolder(cid, folderId) {
+  const fid = folderId == null || folderId === "" ? null : Number(folderId);
+  if (!cid || fid == null || !Number.isFinite(fid)) return;
+  try {
+    await apiFetch(`/api/conversations/${encodeURIComponent(cid)}/folder`, {
+      method: "PATCH",
+      body: JSON.stringify({ folder_id: fid }),
+    });
+    // 서버 재조회(loadConversations) 전에도 사이드바가 이 대화를 폴더 안에 그리도록 로컬 반영.
+    const row = state.conversations.find((c) => String(c.id) === String(cid));
+    if (row) row.folder_id = fid;
+    renderConversationList();
+  } catch (e) {
+    showToast(e?.message || "새 대화를 폴더에 넣지 못했습니다. 목록에서 '이동' 으로 옮겨 주세요.", true);
+  }
+}
+
 async function sendPrompt() {
   const message = promptInputEl.value.trim();
   if (!message) return;
@@ -4090,6 +4122,10 @@ async function sendPrompt() {
   // 이로써 (a) worker 모드에서 ask 타임아웃 후에도 서버 run 이 살아있으면 결과를 회수하고,
   // (b) 발급된 빈 대화가 고아로 누적되지 않는다 (대화는 실제 run 의 컨테이너가 됨).
   let earlyCidActivated = false;
+  // folder-newconv: 이 send 가 만들 대화의 목표 폴더를 **시작 시점에 고정**한다. 전송 중 사용자가
+  // 다른 폴더의 '📝' 를 눌러 state.pendingFolderId 가 바뀌어도, 이 send 의 대화는 처음 의도한
+  // 폴더로 간다(모델 귀속을 busyKey closure 로 고정하는 것과 같은 이유).
+  const sendFolderId = isLazyCreate && state.pendingFolderId != null ? Number(state.pendingFolderId) : null;
   // TASK-0082: lazy-create 시 busyKey 는 beginPendingConversation 이 부여한 unique sentinel
   // (state.pendingSentinel). 직접 send 진입 (pending 흐름 거치지 않음) fallback 으로 새 sentinel
   // 생성 후 state 에도 기록한다. 글로벌 단일 sentinel 시절의 컨텍스트 충돌 (첫 in-flight 이 두 번째
@@ -4124,6 +4160,9 @@ async function sendPrompt() {
       // KV(=대화별 복원 정본)가 존재하지 않으므로, 컨텍스트 swap 시 복원할 값을 entry 에 들고 간다
       // (없으면 직전 대화의 선택이 그대로 노출되는 누출).
       model: _composerCurrentModel(),
+      // folder-newconv: 폴더 헤더 '📝' 로 시작했으면 그 폴더 id. 사이드바가 이 값으로 pending 행을
+      // 해당 폴더 안에 그리고, cid 발급 시 _assignNewConversationToFolder 가 같은 값으로 배정한다.
+      folder_id: sendFolderId,
     });
     renderConversationList();
   }
@@ -4385,6 +4424,11 @@ async function sendPrompt() {
               owner_username: state.user?.username || null,
             });
           }
+          // folder-newconv: cid 가 확정된 첫 지점에서 폴더에 배정한다. 뒤따르는 refreshWorkspace /
+          // loadConversations 가 서버의 folder_id 를 읽어 오므로, 그 조회보다 **먼저** 끝나야 목록이
+          // 폴더 밖으로 한 번 튀었다가 들어오는 깜빡임이 없다 — 그래서 fire-and-forget 이 아니라 await.
+          await _assignNewConversationToFolder(earlyCid, sendFolderId);
+          state.pendingFolderId = null;  // 이 pending 의 목표는 소진됐다(다음 '새 대화' 로 누출 금지).
           // placeholder 제거 반영을 위해 find 가드와 무관하게 항상 재렌더(이미 등재된 cid 여도 placeholder
           // 가 사라진 목록을 다시 그려야 한다).
           renderConversationList();
@@ -4515,6 +4559,11 @@ async function sendPrompt() {
             owner_username: state.user?.username || null,
           });
         }
+        // folder-newconv: early-cid 가 발급되지 않은 fallback 경로(대화 row 를 /api/ask 가 만든 경우).
+        // early-cid 경로가 이미 배정했다면 그쪽에서 pendingSentinel 을 비웠으므로 이 블록에 들어오지
+        // 않는다 — 두 경로는 자연 배타이며 배정이 두 번 걸리지 않는다.
+        await _assignNewConversationToFolder(newCid, sendFolderId);
+        state.pendingFolderId = null;
         renderConversationList();
         // TASK-0061 Phase 2 (AC-0076): lazy-create 응답으로 cid 가 발급된 즉시 polling 시작.
         // ask 가 동기 완료된 경우라도 첫 polling 으로 step snapshot 을 받아 pending bubble 에 반영한다.

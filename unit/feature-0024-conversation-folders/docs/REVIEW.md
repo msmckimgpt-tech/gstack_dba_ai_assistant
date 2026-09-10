@@ -8,6 +8,18 @@ source_of_truth: true
 
 # Review Records
 
+## REV-20260910T064200-folder-newconv [SUBAGENT:ux+design] — PASS (P1 3건 전건 in-cycle 수정)
+- Related TASK: feature-0024-conversation-folders / TASK-20260910T064200-folder-newconv (코드 거주 feature-0003-agent-web-ui)
+- Trigger: `UI/button/layout` + `버튼/화면/레이아웃` keyword matched (§18.8 dispatch 표 3행 → ux · design)
+- Timestamp: 2026-09-10T06:42:00Z
+- Verdict: **PASS** — 고유 P1 3건(①메뉴가 폴더 헤더의 `aria-expanded`(=접힘 상태)를 강탈하고 복구 셀렉터가 이번 변경이 삭제한 클래스를 가리켜 상태가 박제 ②폴더 관리 4기능이 «화면 단서 0» 인 우클릭 전용이 된 발견성 ③접힘 선호를 localStorage 에서 영구 삭제) **전건 수정 + 확인 라운드 통과**. P2 9건도 수정.
+- Artifact: `unit/feature-0003-agent-web-ui/docs/reviews/20260910T064200-folder-newconv-ux-design.md`
+- 검증: `verify_folder_newconv_trigger.mjs` 77 PASS / 0 FAIL · 판별력 뮤턴트 12종 전부 KILL · 프론트 `.mjs` 전수에서 baseline 대비 신규 실패 0.
+- 기각(근거 병기): `📝`→`＋` SVG 전환 · '···' 병치는 사용자가 AskUserQuestion 에서 각각 **선택·미선택**한 항목이라 결정 우선. `conversation.create` 미보유 조합은 `TASK-20260723T180000` 의 권한 부여 구조상 발생하지 않음.
+- 후속 등재(선행 결함, feature-0003 `REPORT.md` §8): `openFloatingMenu` 키보드 내비게이션 부재 · `--text-1` 미정의 8곳 · `forced-colors` 규칙 0건 · 사이드바 이모지 프레젠테이션 혼재.
+- Human Approval Needed: no (§12 승인 항목 없음 — 백엔드·스키마·권한·엔드포인트 변경 0)
+
+
 ## REV-20260723T060000-conv-folders [SUBAGENT:general-purpose] SHIP-WITH-FIXES — 대화 폴더 전체(스키마·RBAC·백엔드·프론트·Phase2a) (Major/Critical §12.3, TASK-0011)
 - §18.8 적대적 **보안** 리뷰(general-purpose, 코드 직접 판독) — IDOR/계정격리/RBAC/SQLi/프롬프트injection/깊이·순환 집중. 판정: HIGH 1 + LOW 2 → **전부 in-cycle 수정 후 SHIP-WITH-FIXES**.
 - **[HIGH — 수정 완료] restore 경로 IDOR (교차계정 un-archive)**: `restore_folder` 라우터가 path `folder_id` 소유만 검증하고 body `archived_folder_ids` 를 무검증으로 `restore_folders(ids)` 에 전달 → `UPDATE ... WHERE folder_id = ANY(%s)` owner 필터 부재. IDENTITY 순차 PK 열거로 공격자 A 가 피해자 B 의 soft-delete 폴더를 대량 부활(무결성/가용성 침해, griefing). 기밀 누출은 없음(list/map 은 owner 스코프). 수정: `restore_folders(ids, owner_account_id)` 에 `AND owner_account_id = %s` SQL 강제, 라우터가 `manage.any` 아니면 `_acct_id(account)` 전달(`_folder_store.py:318`·`folders.py:172-176`).

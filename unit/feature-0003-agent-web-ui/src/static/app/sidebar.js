@@ -16,6 +16,9 @@ import {
   canRenameConversation, showPermissionDeniedToast,
   // sidebar-reorder-anim: 모션 게이트(OS prefers-reduced-motion + 인앱 '애니메이션 효과' 설정).
   _prefersReducedMotion,
+  // folder-newconv: 폴더 헤더 '📝' → 그 폴더를 목표로 하는 새 대화(pending) 진입 + 폴더 헤더
+  //   우클릭이 메뉴를 여는 경로에서 «텍스트 선택 중이면 기본 메뉴» 규칙을 app.js 와 공유한다.
+  beginPendingConversation, _hasSelectionWithin,
 } from "../app.js?v=dev";
 // hangul-qwerty-search: 한/영 자판 교차 검색 primitive (저장소 단일 정의).
 import { matchesAnyVariant, searchVariants } from "../hangul-qwerty.js?v=dev";
@@ -636,13 +639,50 @@ function _folderTotalConvCount(folderId, folderedMap) {
 }
 
 // 폴더 헤더 ··· 메뉴.
-function openFolderMenu(folder, triggerEl) {
+// folder-newconv: 폴더 행 '📝' 의 동작 — 그 폴더를 목표로 하는 새 대화로 진입한다.
+//   대화 row 자체는 첫 메시지 전송 시 lazy 생성되므로(TASK-0048) 여기서 서버를 부르지 않는다.
+//   대신 state.pendingFolderId 에 목표를 남기고, cid 가 발급되는 순간 composer 가 폴더에 배정한다.
+//   접힌 폴더였다면 펼쳐 둔다 — '작성 중' 항목이 접힌 폴더 안에 가려지면 클릭이 아무 일도
+//   안 한 것처럼 보인다.
+function startFolderConversation(folder) {
+  const fid = Number(folder.folder_id);
+  // 접힘 **영속**(_saveCollapsedGroups)은 부러 하지 않는다 — 사용자가 일부러 접어 둔 선호를
+  //   새 대화 한 번이 localStorage 에서 영구히 지우면 안 된다(적대 리뷰 P3). 이번 화면에서만 편다.
+  state.collapsedDateGroups.delete(`folder:${fid}`);
+  // 작성 중이던 텍스트는 컨텍스트가 바뀌어도 입력창에 그대로 남는다. 본문이 멀쩡해 보이는 탓에
+  //   «목적지만 조용히 바뀐» 상태를 놓치고 그대로 보내는 오조작이 가능하므로, 그 경우에만 알린다
+  //   (빈 입력창일 때 토스트를 띄우면 정상 흐름에 소음만 된다).
+  let hadDraftText = false;
+  try {
+    const el = document.getElementById("promptInput");
+    hadDraftText = Boolean(el && String(el.value || "").trim());
+  } catch (_) { /* 입력창을 못 읽어도 진입은 막지 않는다 */ }
+  beginPendingConversation(fid);  // 내부에서 renderConversationList 까지 수행(펼침이 함께 반영된다).
+  if (hadDraftText) {
+    const f = _folderById(fid);
+    showToast(`'${(f && f.name) || "폴더"}' 폴더의 새 대화로 전환했습니다 — 작성 중이던 내용은 그대로입니다.`);
+  }
+  // 펼친 서브트리가 길면 '작성 중' 행이 사이드바 밖으로 밀려, 클릭이 아무 일도 안 한 것처럼 보인다.
+  //   렌더 직후 그 행을 시야로 끌어온다(block:"nearest" — 이미 보이면 스크롤하지 않는다).
+  try {
+    const draft = conversationListEl && conversationListEl.querySelector(".conv-item.is-pending");
+    if (draft && typeof draft.scrollIntoView === "function") draft.scrollIntoView({ block: "nearest" });
+  } catch (_) { /* 스크롤 실패가 대화 진입을 막지는 않는다 */ }
+}
+
+// folder-newconv: 진입 경로가 «'···' 클릭» 에서 «폴더 헤더 우클릭» 으로 바뀌었다. anchorPoint 를
+//   받아 커서 위치에 띄우고(없으면 종전대로 triggerEl rect 기준), 같은 폴더에서 다시 부르면 토글로
+//   닫는다. 항목 구성은 종전과 동일 — 진입 수단만 바뀌었을 뿐 기능은 하나도 빠지지 않는다.
+function openFolderMenu(folder, triggerEl, anchorPoint = null) {
   const existing = document.getElementById("folderMenu");
   if (existing && existing.dataset.folderId === String(folder.folder_id)) { closeFloatingMenus(); return; }
   openFloatingMenu(triggerEl, {
     id: "folderMenu",
     className: "conv-item-menu",
     dataset: { folderId: String(folder.folder_id) },
+    anchorPoint,
+    // 트리거가 폴더 헤더 자신이라, 헤더의 aria-expanded(=폴더 접힘/펼침)를 메뉴가 덮어쓰지 않게 한다.
+    ownsAriaExpanded: false,
     // ctxmenu-order-parity: 좌측 목록의 두 요소(폴더·대화)는 **같은 순서 규칙**을 쓴다 —
     //   `[이름 변경] → [고유 액션] → [이동 류] → [설정]`. 종전에는 폴더가
     //   `하위 폴더 추가 · 이름 변경 · 설정 · 최상위로 꺼내기`, 대화가 `이름 변경 · 공유 · 이동 · 설정`
@@ -652,6 +692,12 @@ function openFolderMenu(folder, triggerEl) {
     //   조건부 항목(depth cap · 최상위 여부)이 빠져도 남은 항목의 상대 순서는 규칙을 지킨다.
     buildItems: (menu, make) => {
       menu.appendChild(make("이름 변경", { onSelect: () => renameFolderFlow(folder) }));
+      // folder-newconv: 메뉴에도 같은 액션을 둔다 — '📝' 는 hover 로만 드러나므로 터치·키보드처럼
+      //   hover 가 없는 입력수단에는 이 항목이 유일한 경로다. 자리는 ctxmenu-order-parity 규칙대로
+      //   양 끝(첫=이름 변경 / 끝=설정) 사이의 고유 액션 구간이다.
+      if (typeof can !== "function" || can("conversation.create")) {
+        menu.appendChild(make("이 폴더에서 새 대화", { onSelect: () => startFolderConversation(folder) }));
+      }
       if (Number(folder.depth) + 1 <= _folderDepthCap()) {
         menu.appendChild(make("하위 폴더 추가", { onSelect: () => createFolderFlow(folder.folder_id) }));
       }
@@ -1252,8 +1298,22 @@ function _renderConversationListDom(reorderFocusKey) {
     else others.push(item);
   });
 
+  // folder-newconv: pending(아직 서버 row 가 없는) 대화도 «어느 폴더의 것인지» 를 안다.
+  //   draft 는 state.pendingFolderId, in-flight 는 entry.folder_id 가 그 목표다. 아래 두 렌더는
+  //   depth 를 받아 폴더 안(들여쓰기)에도, 최상위에도 같은 코드로 그린다 — 폴더 대상으로 새
+  //   대화를 시작했는데 '작성 중' 이 목록 맨 위(최상위)에 뜨면 배정이 안 된 것처럼 보인다.
+  //   목표 폴더가 사라졌으면(삭제·archived) 최상위로 정규화한다 — 그 폴더 노드는 그려지지 않으므로
+  //   폴백이 없으면 pending 대화가 사이드바 어디에도 안 나타난다. state.folders 를 직접 보는 이유는
+  //   아래 _activeFolderIds(폴더 파티션)가 이 함수의 첫 호출보다 **뒤에** 선언돼 TDZ 이기 때문이다.
+  const _pendingFolderRef = (v) => {
+    if (v == null || v === "") return null;
+    const n = Number(v);
+    return state.folders.some((f) => Number(f.folder_id) === n) ? n : null;
+  };
+  const _indentPending = (el, depth) => { if (depth > 0) el.style.paddingLeft = `${8 + depth * 14}px`; };
+
   // TASK-0048: 작성 중 placeholder — compact 한 줄
-  const appendPendingItem = () => {
+  const appendPendingItem = (depth = 0) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "conv-item is-own is-active is-pending";
@@ -1268,12 +1328,14 @@ function _renderConversationListDom(reorderFocusKey) {
     titleEl.className = "conv-item-title";
     titleEl.textContent = "새 대화 (작성 중)";
     button.append(dot, titleEl);
+    _indentPending(button, depth);
     conversationListEl.appendChild(button);
   };
 
   // TASK-0085: in-flight pending entries — compact 한 줄
-  const appendInFlightPendingItems = () => {
-    const entries = Array.from(state.pendingConversationEntries.values());
+  const appendInFlightPendingItems = (folderId = null, depth = 0) => {
+    const entries = Array.from(state.pendingConversationEntries.values())
+      .filter((e) => _pendingFolderRef(e.folder_id) === _pendingFolderRef(folderId));
     entries.sort((a, b) => Number(b.started_at || 0) - Number(a.started_at || 0));
     entries.forEach((entry) => {
       const button = document.createElement("button");
@@ -1296,6 +1358,7 @@ function _renderConversationListDom(reorderFocusKey) {
       titleEl.className = "conv-item-title";
       titleEl.textContent = (entry.message || "새 대화").slice(0, 60);
       button.append(dot, titleEl);
+      _indentPending(button, depth);
       if (entry.status !== "failed") {
         button.addEventListener("click", () => _switchToPendingConversationContext(entry));
       } else {
@@ -1509,8 +1572,11 @@ function _renderConversationListDom(reorderFocusKey) {
   };
 
   // --- 내 대화: pending 항목 먼저, 이후 날짜 기준 그룹 ---
-  if (hasInFlightPending) appendInFlightPendingItems();
-  if (hasDraftPending) appendPendingItem();
+  // folder-newconv: 여기(목록 최상단)는 **폴더 미배정** pending 만 그린다. 폴더를 목표로 하는
+  //   것들은 _appendFolderChildren 이 해당 폴더 안에 그린다 — 양쪽에서 그리면 같은 대화가 두 줄로
+  //   보인다(필터가 두 경로의 단일 분배를 보장한다).
+  if (hasInFlightPending) appendInFlightPendingItems(null);
+  if (hasDraftPending && _pendingFolderRef(state.pendingFolderId) === null) appendPendingItem();
 
   // feature-0024-conversation-folders: own 을 폴더 배정(활성 폴더) 기준으로 분할.
   //   미배정 or archived 폴더 대화는 root(미분류)로 → 기존 날짜 트리. 폴더 배정 대화는 폴더 하위.
@@ -1615,6 +1681,16 @@ function _renderConversationListDom(reorderFocusKey) {
   //   depth 들여쓰기·collapse 는 사이드바 모델 재사용. 폴더 안 대화는 날짜 트리 대신 flat(프로젝트式).
   const _appendFolderChildren = (folder, depth, isCollapsed) => {
     if (isCollapsed) return;
+    // folder-newconv: 이 폴더를 목표로 시작된 pending 대화를 폴더 안 **최상단**에 둔다(가장 최근).
+    //   draft('작성 중')와 in-flight('응답 대기') 둘 다 — 폴더 '📝' 를 눌렀을 때 그 자리에서
+    //   즉시 보이는 것이 «이 폴더 대상» 이라는 유일한 시각 신호다.
+    //   ★ 하위 폴더 재귀보다 **먼저** 그린다. 뒤로 미루면 서브트리(하위 폴더 + 그 안의 대화) 전체가
+    //     사이에 끼어, 하위 폴더가 몇 개만 있어도 그 신호가 사이드바 밖으로 밀려난다(적대 리뷰 P2 —
+    //     실측: 하위 2 + 대화 10 구성에서 헤더로부터 12행 아래).
+    if (hasInFlightPending) appendInFlightPendingItems(folder.folder_id, depth + 1);
+    if (hasDraftPending && _pendingFolderRef(state.pendingFolderId) === Number(folder.folder_id)) {
+      appendPendingItem(depth + 1);
+    }
     _folderChildren(folder.folder_id).forEach((c) => renderFolderNode(c, depth + 1));
     (_foldered.get(Number(folder.folder_id)) || []).slice().sort(
       (a, b) => new Date(b.last_activity_at || b.created_at || 0) - new Date(a.last_activity_at || a.created_at || 0),
@@ -1635,6 +1711,10 @@ function _renderConversationListDom(reorderFocusKey) {
     header.setAttribute("role", "button");
     header.setAttribute("aria-expanded", String(!isCollapsed));
     header.setAttribute("tabindex", "0");
+    // folder-newconv: 폴더 관리 메뉴의 진입점이 우클릭 하나뿐이므로, 그 사실을 화면(툴팁)과
+    //   보조기술(aria-haspopup) 양쪽에 남긴다 — 단서 없이 숨은 진입점은 «기능이 사라진 것»과 같다.
+    header.setAttribute("aria-haspopup", "menu");
+    header.title = "클릭: 펼치기·접기 · 우클릭: 폴더 메뉴";
     header.dataset.folderId = String(folder.folder_id);
     header.style.paddingLeft = `${8 + depth * 14}px`;
 
@@ -1670,20 +1750,50 @@ function _renderConversationListDom(reorderFocusKey) {
     const countBadge = document.createElement("span");
     countBadge.className = "conv-folder-count";
     if (totalCount > 0) countBadge.textContent = String(totalCount);
-    const menuTrig = document.createElement("span");
-    menuTrig.className = "conv-folder-menu-trigger";
-    menuTrig.setAttribute("role", "button");
-    menuTrig.setAttribute("tabindex", "0");
-    menuTrig.setAttribute("aria-label", "폴더 메뉴 열기");
-    menuTrig.textContent = "···";
-    const openMenu = (ev) => { ev.preventDefault(); ev.stopPropagation(); openFolderMenu(folder, menuTrig); };
-    menuTrig.addEventListener("click", openMenu);
-    menuTrig.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") openMenu(ev); });
+    // folder-newconv (사용자 요청 2026-09-10): 폴더 행의 가시 버튼은 «메뉴 펼치기» 가 아니라
+    //   «이 폴더에서 새 대화» 다. 폴더 관리 메뉴(이름 변경·하위 폴더·최상위로·설정)는 없어지지
+    //   않고 헤더 우클릭으로 옮겨 갔다(아래 contextmenu). 대화 생성 권한이 없으면 버튼 자체를
+    //   두지 않는다 — 눌러도 거부 토스트만 뜨는 버튼은 폴더 행의 좁은 폭을 낭비한다.
+    const canCreateConv = typeof can !== "function" || can("conversation.create");
+    let newConvTrig = null;
+    if (canCreateConv) {
+      newConvTrig = document.createElement("span");
+      newConvTrig.className = "conv-folder-newconv-trigger";
+      newConvTrig.setAttribute("role", "button");
+      newConvTrig.setAttribute("tabindex", "0");
+      // 폴더명은 부모 행(헤더)이 이미 읽어 준다 — 여기서 반복하면 행의 accessible name 에
+      //   폴더명이 두 번 편입된다("업무 1 '업무' 폴더에서 새 대화"). '시작' 을 붙인 것은 이 클릭이
+      //   대화를 **아직 만들지 않고** 작성 상태로 들어가기 때문(lazy-create).
+      newConvTrig.setAttribute("aria-label", "새 대화 시작");
+      newConvTrig.title = "이 폴더에서 새 대화 시작";
+      newConvTrig.textContent = "📝";
+      const startConv = (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();  // 헤더 click = 접기/펼치기 토글이므로 버블시키면 폴더가 닫힌다.
+        startFolderConversation(folder);
+      };
+      newConvTrig.addEventListener("click", startConv);
+      newConvTrig.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") startConv(ev); });
+    }
 
-    header.append(chevron, icon, nameSpan, countBadge, menuTrig);
+    header.append(chevron, icon, nameSpan, countBadge);
+    if (newConvTrig) header.appendChild(newConvTrig);
     const toggleF = () => _toggleFolder(folder.folder_id);
     header.addEventListener("click", toggleF);
     header.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleF(); } });
+    // folder-newconv: 폴더 관리 메뉴의 유일한 진입점. app.js 의 _CTX_MENU_TARGETS(=trigger click
+    //   재발화) 를 쓰지 않고 헤더에 직접 다는 이유는, 그 방식이라면 재발화 대상이 이제 '새 대화'
+    //   버튼이라 우클릭이 대화를 만들어 버리기 때문이다. 텍스트 선택 중 우클릭은 브라우저 기본
+    //   메뉴(복사)를 우선하는 규칙은 app.js 와 같은 함수를 공유해 두 경로가 갈리지 않게 한다.
+    header.addEventListener("contextmenu", (ev) => {
+      if (_hasSelectionWithin(header)) return;
+      ev.preventDefault();
+      ev.stopPropagation();  // document 레벨 universal ctxmenu 로 버블시키지 않는다(이중 처리 방지).
+      // 키보드 컨텍스트 메뉴(Menu 키·Shift+F10)는 좌표를 (0,0) 으로 주는 브라우저가 있다 —
+      // 그 경우 커서 앵커 대신 헤더 rect 기준으로 폴백해 좌상단 오배치를 막는다(app.js 와 동형).
+      const fromKeyboard = (ev.clientX <= 0 && ev.clientY <= 0);
+      openFolderMenu(folder, header, fromKeyboard ? null : { x: ev.clientX, y: ev.clientY });
+    });
 
     // 개선6: 드래그&드롭 — 폴더 자체 드래그(이동) + 대화/폴더 드롭 대상.
     header.setAttribute("draggable", "true");

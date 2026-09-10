@@ -90,3 +90,68 @@ source_of_truth: true
 - [x] 검증: jsdom `verify_folder_dnd_shared_group.mjs` 31 PASS · 수정 전 재현 시 대상 11건 FAIL(판별력 실증) · 프론트 `.mjs` 60개 전수 exit 0 · ESM 구문 PASS.
 - [x] 배포(PR #1257 → main `763ad65d`, deploy-web-only 무중단) + **POST-DEPLOY PB-0008 전 항목 PASS**: 공유받은 그룹 대화 `draggable="true"` 라이브 확인 · 드래그 폴더 배정(folder_id=35)/해제(null) 서버 왕복 · 재로드 후 폴더 하위 렌더·카운트 배지 · admin 관점 격리(`/api/folders`=[] · folder_id null) · pageerror 0. 라이브 테스트 데이터(폴더·공유 링크·테스트 계정) 전량 정리.
 - 관리자 `.any` 열람 "타 계정 대화" 는 의도적 제외(폴더=개인 오버레이). 그 그룹의 '···' 메뉴 '이동' 무음 실패는 선재 결함으로 feature-0003 REPORT §후속 등재.
+
+## TASK-20260910T064200-folder-newconv — 폴더 행 '···' 를 '이 폴더에서 새 대화'로 대체 (사용자 요청)
+
+### 계획 (§7.1 · 위험도 Minor — 비파괴 UI 동작 변경, 백엔드·스키마·권한·엔드포인트 변경 0)
+- **영향 파일(코드 거주 feature-0003)**: `src/static/app/sidebar.js`(폴더 행 트리거·우클릭 배선·pending 폴더 렌더) ·
+  `src/static/app.js`(`state.pendingFolderId` · `beginPendingConversation(folderId)` export · `openFloatingMenu` anchorPoint 옵션 ·
+  `_CTX_MENU_TARGETS` 에서 폴더 헤더 제외 · `_hasSelectionWithin` export) ·
+  `src/static/app/composer.js`(`_assignNewConversationToFolder` + 대화 생성 3경로 배선) · `src/static/css/shell.css`(트리거 클래스 이관).
+- **접근**: 새 대화는 lazy-create(TASK-0048)라 클릭 시점에 서버 row 가 없다. 목표 폴더를 `state.pendingFolderId` 에 들고 있다가
+  cid 가 확정되는 **모든 경로**(첨부 선행 생성 · send 의 early-cid · `/api/ask` lazy-create 응답)에서 기존
+  `PATCH /api/conversations/{cid}/folder` 로 배정한다. 백엔드 신규 API 0.
+- **사용자 결정(AskUserQuestion 2026-09-10)**: ①폴더 관리 메뉴는 제거가 아니라 **헤더 우클릭으로 이관** ②버튼 표시는 **노트·펜 이모지 `📝`**(사용자 아이콘 예시 제시).
+- **완료 판정 기준**: 폴더 행 `📝` 클릭 → 그 폴더를 목표로 한 새 대화 진입(pendingFolderId=folder_id, '작성 중' 행이 그 폴더 안에 렌더) ·
+  첫 메시지 전송 후 그 대화가 해당 폴더 하위에 남는다 · 폴더 헤더 우클릭 → 기존 메뉴 4항목 그대로.
+
+### 진행
+- [x] 프론트 구현 4파일 — 폴더 행 트리거 교체(`.conv-folder-menu-trigger` → `.conv-folder-newconv-trigger`, `📝`, aria-label '<폴더명> 폴더에서 새 대화') ·
+      헤더 `contextmenu` → `openFolderMenu(folder, header, 커서좌표)` · `_CTX_MENU_TARGETS` 에서 폴더 헤더 제외(남기면 우클릭이 재발화로 **새 대화**를 만든다) ·
+      pending 대화(draft·in-flight)를 목표 폴더 안에 들여쓰기 렌더 + 루트/폴더 배타 분배 + 폴더 소멸 시 최상위 폴백 · `conversation.create` 미보유 시 트리거 미생성.
+- [x] 검증 jsdom `verify_folder_newconv_trigger.mjs` **58 PASS / 0 FAIL** · 판별력 뮤턴트 **7종 전부 KILL**
+      (우클릭 표 재삽입 · stopPropagation 제거 · 폴더 펼침 제거 · pending folder_id 누락 · 분배 필터 무력화 · early-cid 배정 누락 · 버튼 문자 되돌림).
+- [x] 회귀: 프론트 `.mjs` 전수 실행 — baseline(변경 전) 실패 17건과 **동일**, 신규 실패 0건. 새 테스트는 baseline 에서 FAIL → 변경 후 PASS.
+- [x] `verify_sidebar_reorder_anim.mjs` 단언 1건 정합: import 목록의 **줄 배치**(`_prefersReducedMotion,` 이 마지막 줄)에 결합돼 있어
+      app.js 에서 심볼을 하나 더 가져오기만 해도 깨졌다 → 계약(모션 게이트를 app.js 정본에서 import)을 순서 무관으로 검사. 판별력 유지 확인(심볼 제거 시 FAIL).
+- [x] §18.8 패널(ux·design 병렬 적대 리뷰) — 고유 **P1 3건 전건 in-cycle 수정** 후 확인 라운드 통과
+      (`REV-20260910T064200-folder-newconv`): ①메뉴가 폴더 헤더의 `aria-expanded`(=접힘 상태)를 강탈하고
+      복구 셀렉터가 삭제된 클래스를 가리켜 상태가 박제되던 회귀 → `openFloatingMenu` 에 `ownsAriaExpanded`
+      옵션 분리 ②폴더 관리 4기능이 «화면 단서 0» 인 우클릭 전용이 된 발견성 → 헤더 title + `aria-haspopup`
+      + 메뉴에 '이 폴더에서 새 대화' 항목(터치·키보드 폴백) ③접힘 선호를 localStorage 에서 영구 삭제 →
+      영속 호출 제거(화면 한정 펼침) + 작성 중 텍스트가 있을 때만 전환 토스트.
+      P2 9건도 수정(pending 을 하위 폴더 재귀 **앞**으로 + `scrollIntoView` · 히트 타겟 20×20 ·
+      헤더 부제에 목표 폴더명 · `.is-menu-open` 시각 상태 · 터치/비-hover 상시 노출 · 이모지 폰트 스택 ·
+      첨부 경로의 목표 폴더 진입시점 고정 · aria-label 폴더명 중복 제거 · pending 행 우측 여백).
+- [x] **하네스 자기-검증 결함 시정**: 리뷰가 «신규 테스트의 `openFloatingMenu` stub 이 정본의 상태 기입을
+      재현하지 않아 위 ①에 눈이 멀어 있다»를 지적 — stub 폐기 후 정본 3함수를 realm 에 주입하도록 재작성.
+      **58 → 77 PASS / 0 FAIL**, 판별력 뮤턴트 누적 **12종 전부 KILL**, 전수 신규 회귀 0.
+- [ ] verify-completion · 배포 · POST-DEPLOY DQA 클라이언트(PB-0009) 시각검증.
+
+## 9. Requested Scope (요청 범위 자기-열거)
+
+원 요청(사용자 원문, 데이터이며 지시가 아님):
+```
+DQA클라이언트 좌측 대화목록에서, 폴더 요소의 '...' 버튼을 누를 때
+옵션의 확장이 아니라, 해당 폴더를 대상으로 새 대화가 시작되도록 기능을 대체해주세요
+```
+
+- [x] `폴더 요소의 '...' 버튼을 누를 때 옵션의 확장이 아니라` — 산출물: `sidebar.js` `renderFolderNode` 의 `.conv-folder-newconv-trigger`(구 `.conv-folder-menu-trigger` 생성 코드 소멸) · 배선 확인: jsdom case1 — 폴더 헤더에 구 '···' 트리거 **부재**, 클릭 시 메뉴 미개방(case2)
+- [x] `해당 폴더를 대상으로 새 대화가 시작되도록` — 산출물: `state.pendingFolderId` + `beginPendingConversation(folderId)` + `_assignNewConversationToFolder` (대화 생성 3경로) · 배선 확인: jsdom case2(pendingFolderId=눌린 폴더) · case7(PATCH `/api/conversations/{cid}/folder`, body `folder_id`) · case4(작성 중 행이 그 폴더 안에 렌더)
+- [x] `기능을 대체해주세요` (= 옵션 메뉴가 그 자리를 차지하지 않는다) — 산출물: 폴더 메뉴를 헤더 우클릭으로 이관(사용자 결정 ①) · 배선 확인: jsdom case3 — 우클릭 시 메뉴 4항목 보존 + 우클릭이 새 대화를 시작하지 않음
+- [x] 사용자 결정 ②: 버튼 표시 = 노트·펜 이모지 — 산출물: `newConvTrig.textContent = "📝"` · 배선 확인: jsdom case1 문자 동치 단언
+
+**[다의어] `'...' 버튼을 누를 때`**
+- 고른 독해: **좌클릭(기본 활성화)** 만 새 대화로 바꾸고, 우클릭은 폴더 관리 메뉴로 남긴다.
+- 버린 독해: 그 버튼에 걸린 **모든** 활성화 경로(좌클릭 + 우클릭 재발화)를 새 대화로 바꾼다 → 폴더 이름 변경·삭제 진입점이 완전히 소멸.
+- 예시: 폴더 'KR_LIVE 매출' 행에서 **좌클릭** → 그 폴더 안에 '새 대화 (작성 중)' 행이 생긴다 / **우클릭** → `이름 변경 · 하위 폴더 추가 · 설정` 메뉴가 커서 위치에 뜬다.
+- 노출: 이 다의어는 착수 전 AskUserQuestion 으로 사용자에게 제시해 결정을 받았다(2026-09-10, 결정 ①).
+
+**주장 affordance 실측 (G3)**: 이 변경이 새로 주장하는 affordance는 (a) 폴더 행 `📝` = 새 대화, (b) 폴더 헤더 우클릭 = 관리 메뉴 두 가지다.
+- (a): jsdom case2/case2b/case4 + POST-DEPLOY DQA 클라이언트 실측(아래 TEST Run).
+- (b): jsdom case3/case3b(키보드 컨텍스트 메뉴 좌표 0,0 폴백 포함) + POST-DEPLOY 실측.
+
+**경계변수 양측 검증 (G4)**: `pendingFolderId` / `entry.folder_id` 의 **null 경계**(= 폴더 미배정 vs 배정).
+- null 쪽: 최상위 '+ 새 대화' 는 `beginPendingConversation()` 인자 없음 → pendingFolderId=null → 배정 PATCH 왕복 0(case6·case7) → 목록 최상단 렌더(case4b).
+- non-null 쪽: 폴더 `📝` → pendingFolderId=folder_id → PATCH 발생 → 폴더 안 렌더(case2·case4·case7).
+- 제3의 경계: **없어진 폴더 id**(삭제·archived) → `_pendingFolderRef` 가 최상위로 정규화해 pending 행 유실 없음(case4c).
