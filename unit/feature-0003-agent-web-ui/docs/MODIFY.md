@@ -6708,3 +6708,20 @@ PR #1635 / ca3fe660을 격리 배포 트리에서 전체 롤링했다. 7서비�
 숨기는 형태였고, 단위 테스트는 그 배제를 *의도된 동작*으로 고정해 전부 통과하고 있었다
 (AGENTS §16.7 G12 — 게이트 모수가 노출면 전체와 어긋난 사례). 고립 제품은 운영자가 이미
 비활성으로 내려 둔 경우가 오히려 흔하므로 넓게 보는 것이 기본이어야 한다.
+
+## CHG-20260910T175000-item03-postmerge-record
+- Timestamp: 2026-09-10T17:50:00+09:00
+- Related TASK: TASK-20260910-item03-product-atomic-create
+- 제품 코드 **추가 변경 없음**. `origin/main`(931a543e) 통합 결과 기록.
+
+머지 충돌 2건을 §16.4 «명료한 충돌» 로 자율 해결했다 — append-only 문서(TASK·REPORT) 머리에
+양측이 각각 새 엔트리를 삽입한 형태라 **두 엔트리를 모두 보존**했다(내
+`TASK-20260910-item03-product-atomic-create` + 병행 세션 `TASK-20260910T120000-client-entry-gate`).
+검증은 양측 부모 대조: 두 부모의 `## ` 헤딩 전건 존재(lost=0/0), 병합본 = 각 부모 +1 = 합집합
+(TASK 406/406→407 · REPORT 103/103→104). auto-merge 된 REVIEW·MODIFY·DECISIONS 도 같은 대조로
+lost=0. 머지 후 회귀 93 passed.
+
+머지 커밋에 대한 post-commit verify 의 check #2·#3·#9 FAIL 은 **선재 오탐**이다 — 세 검사가
+「마지막 커밋의 diff」를 보는데 merge 의 combined diff 에는 그 엔트리들의 순증분이 나타나지
+않는다(실제 내용은 부모 `bca600df` 에 있고 그 커밋의 pre-commit gate 는 PASS 였다). 이 저장소의
+기존 관례(CHG-20260910T114800-postmerge-record)와 같이 정상 후속 문서 커밋으로 정합한다.

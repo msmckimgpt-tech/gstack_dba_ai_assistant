@@ -141,6 +141,9 @@ feature_status_note: 비공개 Product 원자 생성·초기 접근 권한 + 고
 - [x] 관리 콘솔 입력 표면(UX-06) — 인용 불가(설계 문서의 UX-06 항목이며 요구서 §6 검증 항목이
       아니다 — «내 해석» 아님, 설계 승인 범위) — 산출물: `products.js` maxLength·카운터·생성
       흐름, `admin.js` 실패 사유 토스트 (`test_a10c`~`test_a10e`).
+- [x] 최신 main 통합 — `git merge --no-edit origin/main` 에서 append-only 문서 머리 충돌 2건
+      (TASK·REPORT: 내 엔트리 ↔ 병행 세션 `client-entry-gate`)을 **양측 보존**으로 자율 해결하고
+      양측 부모 헤딩 대조(lost=0/0 · 합집합)로 검증했다(§16.4).
 - [ ] PB-0009 실 DQA 클라이언트 Run — AC-03-6. **NOT-RUN**: 이 변경은 아직 배포되지 않았고
       (배포는 오케스트레이터 담당) 실 DQA 클라이언트는 사용자 Windows 머신에 있다.
       대체 검증(정적 구조 + Node 파서)과 사유를

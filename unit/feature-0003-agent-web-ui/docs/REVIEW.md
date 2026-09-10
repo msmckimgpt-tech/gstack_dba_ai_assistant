@@ -8885,3 +8885,13 @@ wrapper `FIRST_REQUEST.md` 의 `deploy_scope: included`(2026-06-11 사용자 결
 - 실측으로 확인된 P1 3건 수정: ① `WebPermissions.Label` 오버플로(정당한 121~128자 이름이 실 MySQL 에서 1406 + 틀린 400) → 파생 문자열 clip + 분류기 정확-토큰 판정 ② stub 이 「트랜잭션 존재」를 못 봐 `autocommit=False` 제거가 전건 통과했다(원자성 주장 미검증) → autocommit 감시 stub, 같은 뮤턴트 18건 FAIL 로 KILL ③ 취소가 작성분 폐기 → 초안 보존 + 되돌릴 수 없는 선택 앞 요약 confirm.
 - CSS 특이도 결함은 **실 Chromium 실측**으로 확인·수정(pre-fix `rgb(90,88,82)`/600 → post-fix `rgb(128,125,114)`/400) — jsdom 은 이 클래스를 판정하지 못한다.
 - Human Approval Needed: yes (§10.7 정합화 방향 — REPORT.md BLOCKED 절)
+
+## REV-20260910T175000-item03-postmerge [SKIPPED:non-policy-doc]
+- Related TASK: feature-0003-agent-web-ui (TASK-20260910-item03-product-atomic-create)
+- Trigger: 비정책 doc-only — main 통합 결과·충돌 해결 근거 기록. 제품 코드·정책·디자인 변경 0.
+- Timestamp: 2026-09-10T17:50:00+09:00
+- Verdict: PASS
+- Human Approval Needed: no
+- 적대 검증 패널 정본은 REV-20260910T170000-item03 (§18.8 4 도메인, CONCERN). 이 엔트리는 그
+  이후의 머지 결과 기록이며 새 제품 변경을 담지 않는다. 충돌 해결은 양측 부모 헤딩 대조로
+  검증했다(lost=0/0 · 합집합) — 상세는 MODIFY CHG-20260910T175000-item03-postmerge.
